@@ -76,7 +76,7 @@ public class PadesFinalizeService extends Base64PdfSupport {
         @Override
         public byte[] sign(InputStream data) {
             byte[] documentDigest = DerCmsSupport.sha256(data);
-            byte[] signedAttrs = useSignedAttributes ? DerCmsSupport.buildSignedAttrsImplicit(documentDigest) : null;
+            byte[] signedAttrs = useSignedAttributes ? DerCmsSupport.buildSignedAttrsDer(documentDigest) : null;
             return DerCmsSupport.buildCmsFromRawSignature(signByteBase64, certificatePem, certificateChainPem, signedAttrs);
         }
 

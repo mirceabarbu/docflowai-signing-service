@@ -80,7 +80,7 @@ public class PadesPrepareService extends Base64PdfSupport {
         public byte[] sign(InputStream data) {
             documentDigest = DerCmsSupport.sha256(data);
             if (useSignedAttributes) {
-                byte[] signedAttrs = DerCmsSupport.buildSignedAttrsImplicit(documentDigest);
+                byte[] signedAttrs = DerCmsSupport.buildSignedAttrsDer(documentDigest);
                 toBeSignedDigestBase64 = DerCmsSupport.calcSignedAttrsHashBase64(signedAttrs);
             } else {
                 toBeSignedDigestBase64 = Base64.getEncoder().encodeToString(documentDigest);
