@@ -16,7 +16,7 @@ public class HealthController {
     @Value("${spring.application.name:docflowai-sts-pades-service}")
     private String appName;
 
-    @Value("${APP_MODE:scaffold}")
+    @Value("${APP_MODE:real}")
     private String mode;
 
     @GetMapping("/health")
