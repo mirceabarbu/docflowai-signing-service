@@ -4,6 +4,7 @@ import org.bouncycastle.asn1.ASN1EncodableVector;
 import org.bouncycastle.asn1.ASN1Encoding;
 import org.bouncycastle.asn1.ASN1ObjectIdentifier;
 import org.bouncycastle.asn1.ASN1Primitive;
+import org.bouncycastle.asn1.ASN1Set;
 import org.bouncycastle.asn1.DERNull;
 import org.bouncycastle.asn1.DEROctetString;
 import org.bouncycastle.asn1.DERSet;
@@ -98,15 +99,19 @@ final class DerCmsSupport {
                 }
             }
 
-            AlgorithmIdentifier digestAlg = new DefaultDigestAlgorithmIdentifierFinder().find(new ASN1ObjectIdentifier(OID_SHA256));
+            AlgorithmIdentifier digestAlg =
+                    new DefaultDigestAlgorithmIdentifierFinder().find(new ASN1ObjectIdentifier(OID_SHA256));
             AlgorithmIdentifier sigAlg = signatureAlgorithmFor(leafHolder);
+
             SignerIdentifier sid = new SignerIdentifier(new IssuerAndSerialNumber(
                     leafHolder.getIssuer(),
                     leafHolder.getSerialNumber()
             ));
 
-            DERSet signedAttrs = signedAttrsDerSet != null
-                    ? DERSet.getInstance(ASN1Primitive.fromByteArray(signedAttrsDerSet))
+            // 🔥 FIX IMPORTANT:
+            // NU fortam DERSet aici, pentru ca getInstance intoarce ASN1Set.
+            ASN1Set signedAttrs = signedAttrsDerSet != null
+                    ? ASN1Set.getInstance(ASN1Primitive.fromByteArray(signedAttrsDerSet))
                     : null;
 
             SignerInfo signerInfo = new SignerInfo(
@@ -142,10 +147,15 @@ final class DerCmsSupport {
     }
 
     private static AlgorithmIdentifier signatureAlgorithmFor(X509CertificateHolder holder) {
-        String publicKeyAlgOid = holder.getSubjectPublicKeyInfo().getAlgorithm().getAlgorithm().getId();
+        String publicKeyAlgOid = holder.getSubjectPublicKeyInfo()
+                .getAlgorithm()
+                .getAlgorithm()
+                .getId();
+
         if (OID_EC_PUBLIC_KEY.equals(publicKeyAlgOid)) {
             return new AlgorithmIdentifier(new ASN1ObjectIdentifier(OID_ECDSA_SHA256));
         }
+
         return new AlgorithmIdentifier(new ASN1ObjectIdentifier(OID_RSA), DERNull.INSTANCE);
     }
 
