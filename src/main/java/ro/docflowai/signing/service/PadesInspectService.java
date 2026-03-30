@@ -33,10 +33,11 @@ public class PadesInspectService extends Base64PdfSupport {
             for (String name : names) {
                 PdfPKCS7 pkcs7 = signatureUtil.readSignatureData(name);
                 boolean integrity = pkcs7.verifySignatureIntegrityAndAuthenticity();
-                java.security.cert.Certificate[] certs = pkcs7.getCertificates();
-                int certCount = certs == null ? 0 : certs.length;
-                String subject = pkcs7.getSigningCertificate() != null ? pkcs7.getSigningCertificate().getSubjectX500Principal().getName() : "n/a";
-                out.notes.add("Field=" + name + "; integrity=" + integrity + "; algo=" + pkcs7.getSignatureAlgorithmName() + "; certs=" + certCount + "; subject=" + subject);
+                out.notes.add("Field=" + name
+                        + "; integrity=" + integrity
+                        + "; algo=" + pkcs7.getSignatureAlgorithmName()
+                        + "; chain=" + (pkcs7.getSignCertificateChain() == null ? 0 : pkcs7.getSignCertificateChain().length)
+                        + "; tsa=" + !pkcs7.getTimeStampDate().toString().contains("UNDEFINED"));
             }
             pdfDocument.close();
             return out;
