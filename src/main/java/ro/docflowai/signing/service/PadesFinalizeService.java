@@ -22,16 +22,27 @@ public class PadesFinalizeService extends Base64PdfSupport {
     @Value("${APP_MODE:real}")
     private String mode;
 
+    private final CertificateChainResolver certificateChainResolver;
+
+    public PadesFinalizeService(CertificateChainResolver certificateChainResolver) {
+        this.certificateChainResolver = certificateChainResolver;
+    }
+
     public FinalizeResponse finalizeSignature(FinalizeRequest request) {
         try {
             byte[] preparedPdf = decodeBase64(request.preparedPdfBase64);
             ByteArrayOutputStream signedOut = new ByteArrayOutputStream();
 
             PdfDocument document = new PdfDocument(new PdfReader(new ByteArrayInputStream(preparedPdf)));
+            java.util.List<String> enrichedChain = certificateChainResolver.enrichChain(
+                    request.certificatePem,
+                    request.certificateChainPem
+            );
+
             DeferredContainer container = new DeferredContainer(
                     request.signByteBase64,
                     request.certificatePem,
-                    request.certificateChainPem,
+                    enrichedChain,
                     Boolean.TRUE.equals(request.useSignedAttributes),
                     request.subFilter
             );

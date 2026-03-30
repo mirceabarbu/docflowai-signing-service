@@ -14,3 +14,15 @@ management:
 logging:
   level:
     root: ${LOG_LEVEL_ROOT:INFO}
+
+trust:
+  chain:
+    fetch-enabled: ${TRUST_CHAIN_FETCH_ENABLED:true}
+    max-depth: ${TRUST_CHAIN_MAX_DEPTH:3}
+    http-timeout-ms: ${TRUST_CHAIN_HTTP_TIMEOUT_MS:5000}
+
+tsa:
+  enabled: ${TSA_ENABLED:false}
+  url: ${TSA_URL:}
+  username: ${TSA_USERNAME:}
+  password: ${TSA_PASSWORD:}
