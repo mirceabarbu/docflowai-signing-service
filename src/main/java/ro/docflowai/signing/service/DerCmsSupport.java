@@ -90,12 +90,28 @@ final class DerCmsSupport {
             X509CertificateHolder leafHolder = new X509CertificateHolder(pemToDer(certPem));
             List<X509CertificateHolder> chain = new ArrayList<>();
             chain.add(leafHolder);
+
             if (chainPem != null) {
                 for (String pem : chainPem) {
                     if (pem == null || pem.isBlank()) continue;
+
                     X509CertificateHolder holder = new X509CertificateHolder(pemToDer(pem));
-                    boolean duplicate = chain.stream().anyMatch(existing -> java.util.Arrays.equals(existing.getEncoded(), holder.getEncoded()));
-                    if (!duplicate) chain.add(holder);
+
+                    boolean duplicate = false;
+                    for (X509CertificateHolder existing : chain) {
+                        try {
+                            if (java.util.Arrays.equals(existing.getEncoded(), holder.getEncoded())) {
+                                duplicate = true;
+                                break;
+                            }
+                        } catch (Exception ex) {
+                            throw new RuntimeException("Nu am putut compara certificatele din lanț", ex);
+                        }
+                    }
+
+                    if (!duplicate) {
+                        chain.add(holder);
+                    }
                 }
             }
 
@@ -108,8 +124,6 @@ final class DerCmsSupport {
                     leafHolder.getSerialNumber()
             ));
 
-            // 🔥 FIX IMPORTANT:
-            // NU fortam DERSet aici, pentru ca getInstance intoarce ASN1Set.
             ASN1Set signedAttrs = signedAttrsDerSet != null
                     ? ASN1Set.getInstance(ASN1Primitive.fromByteArray(signedAttrsDerSet))
                     : null;
