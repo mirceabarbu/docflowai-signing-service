@@ -5,15 +5,6 @@ import com.itextpdf.signatures.ITSAClient;
 import com.itextpdf.signatures.PdfPKCS7;
 import com.itextpdf.signatures.PdfSigner;
 import com.itextpdf.signatures.TSAClientBouncyCastle;
-import org.bouncycastle.asn1.ASN1EncodableVector;
-import org.bouncycastle.asn1.ASN1Encoding;
-import org.bouncycastle.asn1.ASN1ObjectIdentifier;
-import org.bouncycastle.asn1.DEROctetString;
-import org.bouncycastle.asn1.DERSet;
-import org.bouncycastle.asn1.cms.Attribute;
-import org.bouncycastle.asn1.cms.CMSAttributes;
-import org.bouncycastle.asn1.cms.CMSObjectIdentifiers;
-
 import java.io.InputStream;
 import java.security.MessageDigest;
 import java.security.cert.CertificateFactory;
@@ -49,27 +40,6 @@ final class DerCmsSupport {
         }
     }
 
-    static byte[] buildSignedAttrsDer(byte[] documentDigest) {
-        try {
-            ASN1EncodableVector attrs = new ASN1EncodableVector();
-            attrs.add(new Attribute(
-                    CMSAttributes.contentType,
-                    new DERSet(CMSObjectIdentifiers.data)
-            ));
-            attrs.add(new Attribute(
-                    CMSAttributes.messageDigest,
-                    new DERSet(new DEROctetString(documentDigest))
-            ));
-            return new DERSet(attrs).getEncoded(ASN1Encoding.DER);
-        } catch (Exception e) {
-            throw new RuntimeException("Nu am putut construi signedAttrs DER", e);
-        }
-    }
-
-    static String calcSignedAttrsHashBase64(byte[] signedAttrsDerSet) {
-        return Base64.getEncoder().encodeToString(sha256(signedAttrsDerSet));
-    }
-
     static String calcPdfPkcs7SignedAttrsHashBase64(byte[] documentDigest,
                                                     List<String> certificateChainPem,
                                                     PdfSigner.CryptoStandard cryptoStandard) {
@@ -88,7 +58,8 @@ final class DerCmsSupport {
                                     List<String> certificateChainPem,
                                     String signatureAlgorithm,
                                     ITSAClient tsaClient,
-                                    PdfSigner.CryptoStandard cryptoStandard) {
+                                    PdfSigner.CryptoStandard cryptoStandard,
+                                    boolean useSignedAttributes) {
         try {
             byte[] signatureBytes = Base64.getDecoder().decode(signByteBase64);
             X509Certificate[] chain = parseCertificateChain(certificateChainPem);
@@ -96,6 +67,7 @@ final class DerCmsSupport {
             pkcs7.setExternalSignatureValue(signatureBytes, null, signatureAlgorithm);
             Collection<byte[]> ocsp = null;
             Collection<byte[]> crls = null;
+            // current STS flow signs authenticated attributes hash; keep iText native encoding path.
             return pkcs7.getEncodedPKCS7(documentDigest, cryptoStandard, tsaClient, ocsp, crls);
         } catch (Exception e) {
             throw new RuntimeException("Nu am putut construi CMS/PKCS#7 cu iText", e);
@@ -154,7 +126,7 @@ final class DerCmsSupport {
     static byte[] pemToDer(String pem) {
         String body = pem.replace("-----BEGIN CERTIFICATE-----", "")
                 .replace("-----END CERTIFICATE-----", "")
-                .replaceAll("\\s+", "");
+                .replaceAll("\s+", "");
         return Base64.getDecoder().decode(body);
     }
 

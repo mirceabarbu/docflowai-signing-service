@@ -40,6 +40,12 @@ public class PadesFinalizeService extends Base64PdfSupport {
     @Value("${TSA_TOKEN_SIZE_ESTIMATE:8192}")
     private int tsaTokenSizeEstimate;
 
+    private final CertificateChainResolver certificateChainResolver;
+
+    public PadesFinalizeService(CertificateChainResolver certificateChainResolver) {
+        this.certificateChainResolver = certificateChainResolver;
+    }
+
     public FinalizeResponse finalizeSignature(FinalizeRequest request) {
         try {
             byte[] preparedPdf = decodeBase64(request.preparedPdfBase64);
@@ -51,6 +57,10 @@ public class PadesFinalizeService extends Base64PdfSupport {
             }
             if (request.certificateChainPem != null) {
                 chain.addAll(request.certificateChainPem);
+            }
+            List<String> enrichedChain = certificateChainResolver.enrichChain(request.certificatePem, chain);
+            if ((enrichedChain == null || enrichedChain.isEmpty()) && !chain.isEmpty()) {
+                enrichedChain = chain;
             }
 
             ITSAClient tsaClient = DerCmsSupport.buildTsaClient(
@@ -64,7 +74,7 @@ public class PadesFinalizeService extends Base64PdfSupport {
             PdfDocument document = new PdfDocument(new PdfReader(new ByteArrayInputStream(preparedPdf)));
             DeferredContainer container = new DeferredContainer(
                     request.signByteBase64,
-                    chain,
+                    enrichedChain,
                     Boolean.TRUE.equals(request.useSignedAttributes),
                     request.subFilter,
                     tsaClient
@@ -111,23 +121,14 @@ public class PadesFinalizeService extends Base64PdfSupport {
         public byte[] sign(InputStream data) {
             byte[] documentDigest = DerCmsSupport.sha256(data);
             String signatureAlgorithm = inferSignatureAlgorithm(certificateChainPem);
-            if (useSignedAttributes) {
-                return DerCmsSupport.buildCmsWithIText(
-                        signByteBase64,
-                        documentDigest,
-                        certificateChainPem,
-                        signatureAlgorithm,
-                        tsaClient,
-                        PdfSigner.CryptoStandard.CADES
-                );
-            }
             return DerCmsSupport.buildCmsWithIText(
                     signByteBase64,
                     documentDigest,
                     certificateChainPem,
                     signatureAlgorithm,
                     tsaClient,
-                    PdfSigner.CryptoStandard.CADES
+                    PdfSigner.CryptoStandard.CADES,
+                    useSignedAttributes
             );
         }
 
