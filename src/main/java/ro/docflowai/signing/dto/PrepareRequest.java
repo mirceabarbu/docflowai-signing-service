@@ -18,4 +18,7 @@ public class PrepareRequest {
     @NotNull public Float height;
     @NotNull public Boolean useSignedAttributes;
     @NotBlank public String subFilter;
+    // b236: certificatul semnatarului (PEM) — necesar pentru signing-certificate-v2 în signedAttrs
+    // Se trimite DOAR când e cunoscut înaintea hash-ului (fluxul b236: prepare după OAuth)
+    public String signerCertificatePem;
 }

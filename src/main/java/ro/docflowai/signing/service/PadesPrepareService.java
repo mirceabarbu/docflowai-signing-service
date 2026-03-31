@@ -8,6 +8,8 @@ import com.itextpdf.kernel.pdf.StampingProperties;
 import com.itextpdf.signatures.IExternalSignatureContainer;
 import com.itextpdf.signatures.PdfSignatureAppearance;
 import com.itextpdf.signatures.PdfSigner;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import ro.docflowai.signing.dto.PrepareRequest;
@@ -21,11 +23,23 @@ import java.util.Base64;
 @Service
 public class PadesPrepareService extends Base64PdfSupport {
 
+    private static final Logger log = LoggerFactory.getLogger(PadesPrepareService.class);
+
     @Value("${APP_MODE:real}")
     private String mode;
 
     public PrepareResponse prepare(PrepareRequest request) {
         try {
+            // b236: dacă certificatul semnatarului e furnizat, îl includem în signedAttrs
+            // (signing-certificate-v2 per RFC 5035 / PAdES-B-B)
+            byte[] signerCertDer = null;
+            if (request.signerCertificatePem != null && !request.signerCertificatePem.isBlank()) {
+                signerCertDer = DerCmsSupport.pemToDer(request.signerCertificatePem);
+                log.info("prepare: signerCertificatePem primit — signing-certificate-v2 va fi inclus in signedAttrs");
+            } else {
+                log.warn("prepare: signerCertificatePem absent — signedAttrs fara signing-certificate-v2 (DSS warning)");
+            }
+
             byte[] pdfBytes = decodeBase64(request.pdfBase64);
             ByteArrayOutputStream preparedOut = new ByteArrayOutputStream();
             PdfReader reader = new PdfReader(new ByteArrayInputStream(pdfBytes));
@@ -40,7 +54,12 @@ public class PadesPrepareService extends Base64PdfSupport {
             if (request.contactInfo != null) appearance.setContact(request.contactInfo);
             appearance.setLayer2Text(buildLayer2Text(request));
 
-            CapturingBlankContainer blank = new CapturingBlankContainer(request.subFilter, Boolean.TRUE.equals(request.useSignedAttributes));
+            final byte[] signerCertDerFinal = signerCertDer;
+            CapturingBlankContainer blank = new CapturingBlankContainer(
+                    request.subFilter,
+                    Boolean.TRUE.equals(request.useSignedAttributes),
+                    signerCertDerFinal
+            );
             int estimatedSignatureSize = 32768;
             signer.signExternalContainer(blank, estimatedSignatureSize);
 
@@ -53,34 +72,44 @@ public class PadesPrepareService extends Base64PdfSupport {
             out.subFilter = request.subFilter;
             out.estimatedSignatureSize = estimatedSignatureSize;
             out.mode = mode;
-            out.warning = null;
+            out.warning = signerCertDer == null
+                    ? "signerCertificatePem absent — signing-certificate-v2 nu e inclus in signedAttrs"
+                    : null;
+
+            log.info("prepare: OK — fieldName={}, hasCert={}, toBeSignedDigestLen={}",
+                    request.fieldName, signerCertDer != null, out.toBeSignedDigestBase64.length());
             return out;
         } catch (Exception e) {
-            throw new RuntimeException("prepare PAdES a eșuat", e);
+            log.error("prepare: EROARE — {}", e.getMessage(), e);
+            throw new RuntimeException("prepare PAdES a esuat", e);
         }
     }
 
     private String buildLayer2Text(PrepareRequest request) {
-        String role = request.signerRole == null || request.signerRole.isBlank() ? "Semnatar" : request.signerRole;
+        String role = request.signerRole == null || request.signerRole.isBlank()
+                ? "Semnatar" : request.signerRole;
         return "Semnat digital QES\n" + request.signerName + "\n" + role;
     }
 
     static class CapturingBlankContainer implements IExternalSignatureContainer {
         private final String subFilter;
         private final boolean useSignedAttributes;
+        private final byte[] signingCertDer; // pentru signing-certificate-v2
         byte[] documentDigest;
         String toBeSignedDigestBase64;
 
-        CapturingBlankContainer(String subFilter, boolean useSignedAttributes) {
+        CapturingBlankContainer(String subFilter, boolean useSignedAttributes, byte[] signingCertDer) {
             this.subFilter = subFilter;
             this.useSignedAttributes = useSignedAttributes;
+            this.signingCertDer = signingCertDer;
         }
 
         @Override
         public byte[] sign(InputStream data) {
             documentDigest = DerCmsSupport.sha256(data);
             if (useSignedAttributes) {
-                byte[] signedAttrs = DerCmsSupport.buildSignedAttrsDer(documentDigest);
+                // Construim signedAttrs cu signing-certificate-v2 dacă avem cert
+                byte[] signedAttrs = DerCmsSupport.buildSignedAttrsDer(documentDigest, signingCertDer);
                 toBeSignedDigestBase64 = DerCmsSupport.calcSignedAttrsHashBase64(signedAttrs);
             } else {
                 toBeSignedDigestBase64 = Base64.getEncoder().encodeToString(documentDigest);

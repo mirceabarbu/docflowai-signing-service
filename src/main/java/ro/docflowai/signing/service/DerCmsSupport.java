@@ -1,34 +1,24 @@
 package ro.docflowai.signing.service;
 
-import org.bouncycastle.asn1.ASN1EncodableVector;
-import org.bouncycastle.asn1.ASN1Encoding;
-import org.bouncycastle.asn1.ASN1Integer;
-import org.bouncycastle.asn1.ASN1ObjectIdentifier;
-import org.bouncycastle.asn1.ASN1Primitive;
-import org.bouncycastle.asn1.ASN1Set;
-import org.bouncycastle.asn1.DERNull;
-import org.bouncycastle.asn1.DEROctetString;
-import org.bouncycastle.asn1.DERSequence;
-import org.bouncycastle.asn1.DERSet;
-import org.bouncycastle.asn1.cms.Attribute;
-import org.bouncycastle.asn1.cms.CMSAttributes;
-import org.bouncycastle.asn1.cms.CMSObjectIdentifiers;
-import org.bouncycastle.asn1.cms.ContentInfo;
-import org.bouncycastle.asn1.cms.IssuerAndSerialNumber;
-import org.bouncycastle.asn1.cms.SignedData;
-import org.bouncycastle.asn1.cms.SignerIdentifier;
-import org.bouncycastle.asn1.cms.SignerInfo;
+import org.bouncycastle.asn1.*;
+import org.bouncycastle.asn1.cms.*;
 import org.bouncycastle.asn1.x509.AlgorithmIdentifier;
 import org.bouncycastle.cert.X509CertificateHolder;
 import org.bouncycastle.operator.DefaultDigestAlgorithmIdentifierFinder;
+import org.bouncycastle.tsp.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.InputStream;
 import java.math.BigInteger;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.security.MessageDigest;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
@@ -40,31 +30,29 @@ final class DerCmsSupport {
 
     private DerCmsSupport() {}
 
-    static final String OID_SHA256        = "2.16.840.1.101.3.4.2.1";
-    static final String OID_RSA           = "1.2.840.113549.1.1.1";
-    static final String OID_EC_PUBLIC_KEY = "1.2.840.10045.2.1";
-    static final String OID_ECDSA_SHA256  = "1.2.840.10045.4.3.2";
+    static final String OID_SHA256            = "2.16.840.1.101.3.4.2.1";
+    static final String OID_RSA               = "1.2.840.113549.1.1.1";
+    static final String OID_EC_PUBLIC_KEY     = "1.2.840.10045.2.1";
+    static final String OID_ECDSA_SHA256      = "1.2.840.10045.4.3.2";
+    // id-aa-signingCertificateV2 (RFC 5035)
+    static final String OID_SIGNING_CERT_V2   = "1.2.840.113549.1.9.16.2.47";
+    // id-aa-signatureTimeStampToken (RFC 3161)
+    static final String OID_SIGNATURE_TST     = "1.2.840.113549.1.9.16.2.14";
 
     // ── Hash helpers ──────────────────────────────────────────────────────────
 
     static byte[] sha256(byte[] data) {
-        try {
-            return MessageDigest.getInstance("SHA-256").digest(data);
-        } catch (Exception e) {
-            throw new RuntimeException("Nu am putut calcula SHA-256", e);
-        }
+        try { return MessageDigest.getInstance("SHA-256").digest(data); }
+        catch (Exception e) { throw new RuntimeException("SHA-256 failed", e); }
     }
 
     static byte[] sha256(InputStream in) {
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
-            byte[] buf = new byte[8192];
-            int n;
+            byte[] buf = new byte[8192]; int n;
             while ((n = in.read(buf)) > 0) md.update(buf, 0, n);
             return md.digest();
-        } catch (Exception e) {
-            throw new RuntimeException("Nu am putut calcula SHA-256 din stream", e);
-        }
+        } catch (Exception e) { throw new RuntimeException("SHA-256 stream failed", e); }
     }
 
     static String calcSignedAttrsHashBase64(byte[] signedAttrsDerSet) {
@@ -72,70 +60,131 @@ final class DerCmsSupport {
     }
 
     // ── SignedAttrs DER builder ───────────────────────────────────────────────
+    //
+    // Când signingCertDer != null, adaugă atributul id-aa-signingCertificateV2 (RFC 5035).
+    // Acesta leagă criptografic certificatul de signedAttrs și e obligatoriu în PAdES-B-B.
+    // IMPORTANT: hash-ul primit de STS trebuie calculat din signedAttrs care conțin acest atribut,
+    //            deci certificatul trebuie cunoscut ÎNAINTE de a calcula hash-ul → fluxul b236.
 
-    static byte[] buildSignedAttrsDer(byte[] documentDigest) {
+    static byte[] buildSignedAttrsDer(byte[] documentDigest, byte[] signingCertDer) {
         try {
             ASN1EncodableVector attrs = new ASN1EncodableVector();
-            attrs.add(new Attribute(
-                    CMSAttributes.contentType,
-                    new DERSet(CMSObjectIdentifiers.data)
-            ));
-            attrs.add(new Attribute(
-                    CMSAttributes.messageDigest,
-                    new DERSet(new DEROctetString(documentDigest))
-            ));
-            return new DERSet(attrs).getEncoded(ASN1Encoding.DER);
+
+            // 1. contentType
+            attrs.add(new Attribute(CMSAttributes.contentType, new DERSet(CMSObjectIdentifiers.data)));
+
+            // 2. messageDigest
+            attrs.add(new Attribute(CMSAttributes.messageDigest,
+                    new DERSet(new DEROctetString(documentDigest))));
+
+            // 3. signing-certificate-v2 (când certificatul e cunoscut)
+            if (signingCertDer != null) {
+                byte[] certHash = sha256(signingCertDer);
+                // ESSCertIDv2 = SEQUENCE { certHash OCTET STRING }
+                // hashAlgorithm omis (DEFAULT sha256, DER encoding cere omiterea DEFAULT)
+                ASN1EncodableVector essCertIdV2 = new ASN1EncodableVector();
+                essCertIdV2.add(new DEROctetString(certHash));
+
+                ASN1EncodableVector certIds = new ASN1EncodableVector();
+                certIds.add(new DERSequence(essCertIdV2));
+
+                // SigningCertificateV2 = SEQUENCE { SEQUENCE OF ESSCertIDv2 }
+                ASN1EncodableVector scv2 = new ASN1EncodableVector();
+                scv2.add(new DERSequence(certIds));
+
+                attrs.add(new Attribute(
+                        new ASN1ObjectIdentifier(OID_SIGNING_CERT_V2),
+                        new DERSet(new DERSequence(scv2))
+                ));
+                log.debug("buildSignedAttrsDer: signing-certificate-v2 adăugat (certHashLen=32)");
+            }
+
+            byte[] der = new DERSet(attrs).getEncoded(ASN1Encoding.DER);
+            log.debug("buildSignedAttrsDer: signedAttrs DER len={}", der.length);
+            return der;
         } catch (Exception e) {
             throw new RuntimeException("Nu am putut construi signedAttrs DER", e);
         }
     }
 
+    // Overload backward-compat (fără cert)
+    static byte[] buildSignedAttrsDer(byte[] documentDigest) {
+        return buildSignedAttrsDer(documentDigest, null);
+    }
+
     // ── ECDSA raw r||s → DER SEQUENCE converter ───────────────────────────────
-    //
-    // STS returneaza signByte ca byte[] raw pentru ECDSA P-256:
-    //   bytes[ 0..31] = r  (big-endian unsigned, 32 bytes)
-    //   bytes[32..63] = s  (big-endian unsigned, 32 bytes)
-    //
-    // CMS / RFC 3279 cere DER SEQUENCE { INTEGER r, INTEGER s }.
-    // Fara aceasta conversie semnatura este criptografic invalida in Adobe/DSS.
-    //
-    // Detectam formatul raw: lungime == 64 SI primul byte != 0x30 (tag SEQUENCE DER).
-    // Daca STS returneaza vreodata DER direct, metoda este no-op.
 
     static byte[] normalizeEcdsaSignature(X509CertificateHolder leafHolder, byte[] signatureBytes) {
-        String pkAlg = leafHolder.getSubjectPublicKeyInfo()
-                .getAlgorithm().getAlgorithm().getId();
-
-        // RSA: bytes-urile sunt direct valoarea semnaturii, fara conversie necesara
+        String pkAlg = leafHolder.getSubjectPublicKeyInfo().getAlgorithm().getAlgorithm().getId();
         if (!OID_EC_PUBLIC_KEY.equals(pkAlg)) {
             log.debug("normalizeEcdsaSignature: RSA, fara conversie (len={})", signatureBytes.length);
             return signatureBytes;
         }
-
-        // ECDSA: detectam raw r||s (64 bytes, fara tag DER 0x30)
         if (signatureBytes.length == 64 && (signatureBytes[0] & 0xFF) != 0x30) {
-            log.info("normalizeEcdsaSignature: ECDSA raw r||s detectat (len=64, firstByte=0x{}) -> DER SEQUENCE",
-                    String.format("%02x", signatureBytes[0] & 0xFF));
+            log.info("normalizeEcdsaSignature: ECDSA raw r||s detectat → DER SEQUENCE");
             try {
                 byte[] r = Arrays.copyOfRange(signatureBytes, 0, 32);
                 byte[] s = Arrays.copyOfRange(signatureBytes, 32, 64);
                 ASN1EncodableVector seq = new ASN1EncodableVector();
-                // BigInteger(1, bytes) = interpretare unsigned (MSB=1 nu inseamna negativ)
-                seq.add(new ASN1Integer(new BigInteger(1, r)));
-                seq.add(new ASN1Integer(new BigInteger(1, s)));
+                seq.add(new ASN1Integer(new java.math.BigInteger(1, r)));
+                seq.add(new ASN1Integer(new java.math.BigInteger(1, s)));
                 byte[] derSig = new DERSequence(seq).getEncoded(ASN1Encoding.DER);
-                log.info("normalizeEcdsaSignature: DER SEQUENCE generat cu succes (len={})", derSig.length);
+                log.info("normalizeEcdsaSignature: DER generat (len={})", derSig.length);
                 return derSig;
             } catch (Exception e) {
-                log.warn("normalizeEcdsaSignature: conversie esuata, folosim bytes originali", e);
+                log.warn("normalizeEcdsaSignature: conversie esuata, bytes originali", e);
                 return signatureBytes;
             }
         }
-
-        // Deja DER (primul byte = 0x30) sau alta lungime neasteptata (ex. P-384 = 96 bytes)
-        log.info("normalizeEcdsaSignature: ECDSA bytes par a fi deja DER sau format extins (len={}, firstByte=0x{})",
-                signatureBytes.length, String.format("%02x", signatureBytes[0] & 0xFF));
+        log.debug("normalizeEcdsaSignature: ECDSA deja DER sau format extins (len={})", signatureBytes.length);
         return signatureBytes;
+    }
+
+    // ── RFC 3161 TSA timestamp ────────────────────────────────────────────────
+    //
+    // Timestamp-ul acoperă signatureValue din SignerInfo.
+    // Fără el, Adobe afișează "Signing time from signer's clock" și nu poate face LTV.
+    // Cu el, Adobe știe că certificatul era valid la momentul semnării.
+
+    static byte[] fetchTsaTimestamp(byte[] signatureBytes, String tsaUrl) {
+        if (tsaUrl == null || tsaUrl.isBlank()) return null;
+        try {
+            log.info("TSA: requesting timestamp from {}", tsaUrl);
+            byte[] msgImprint = sha256(signatureBytes);
+
+            TimeStampRequestGenerator gen = new TimeStampRequestGenerator();
+            gen.setCertReq(true);
+            TimeStampRequest tsq = gen.generate(
+                    TSPAlgorithms.SHA256, msgImprint,
+                    BigInteger.valueOf(System.currentTimeMillis())
+            );
+            byte[] tsqBytes = tsq.getEncoded();
+
+            HttpClient client = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(10))
+                    .build();
+            HttpRequest req = HttpRequest.newBuilder()
+                    .uri(URI.create(tsaUrl))
+                    .header("Content-Type", "application/timestamp-query")
+                    .POST(HttpRequest.BodyPublishers.ofByteArray(tsqBytes))
+                    .timeout(Duration.ofSeconds(20))
+                    .build();
+            HttpResponse<byte[]> resp = client.send(req, HttpResponse.BodyHandlers.ofByteArray());
+
+            if (resp.statusCode() < 200 || resp.statusCode() >= 300) {
+                log.warn("TSA: HTTP {} de la {} — timestamp omis", resp.statusCode(), tsaUrl);
+                return null;
+            }
+
+            TimeStampResponse tsr = new TimeStampResponse(resp.body());
+            tsr.validate(tsq);
+            byte[] tstBytes = tsr.getTimeStampToken().getEncoded();
+            log.info("TSA: timestamp obtinut cu succes (len={})", tstBytes.length);
+            return tstBytes;
+        } catch (Exception e) {
+            log.warn("TSA: eroare la obtinerea timestamp-ului (non-fatal, semnatura continua fara TST): {}", e.getMessage());
+            return null;
+        }
     }
 
     // ── CMS builder ───────────────────────────────────────────────────────────
@@ -143,65 +192,74 @@ final class DerCmsSupport {
     static byte[] buildCmsFromRawSignature(String signByteBase64,
                                            String certPem,
                                            List<String> chainPem,
-                                           byte[] signedAttrsDerSet) {
+                                           byte[] signedAttrsDerSet,
+                                           String tsaUrl) {
         try {
             byte[] signatureBytes = Base64.getDecoder().decode(signByteBase64);
-
-            // LOG DIAGNOSTIC — vizibil in Railway logs la primul test
             log.info("buildCmsFromRawSignature: signByte len={}, firstByte=0x{}",
                     signatureBytes.length,
                     signatureBytes.length > 0 ? String.format("%02x", signatureBytes[0] & 0xFF) : "??");
 
             X509CertificateHolder leafHolder = new X509CertificateHolder(pemToDer(certPem));
-
-            // FIX PRINCIPAL: raw ECDSA r||s → DER SEQUENCE
             signatureBytes = normalizeEcdsaSignature(leafHolder, signatureBytes);
 
-            // Construim lantul de certificate (deduplicat)
+            // ── RFC 3161 timestamp (non-fatal dacă TSA e indisponibil) ─────────
+            byte[] tstBytes = fetchTsaTimestamp(signatureBytes, tsaUrl);
+
+            // ── Certificate chain ─────────────────────────────────────────────
             List<X509CertificateHolder> chain = new ArrayList<>();
             chain.add(leafHolder);
-
             if (chainPem != null) {
                 for (String pem : chainPem) {
                     if (pem == null || pem.isBlank()) continue;
-                    X509CertificateHolder holder = new X509CertificateHolder(pemToDer(pem));
-                    boolean duplicate = false;
-                    for (X509CertificateHolder existing : chain) {
-                        try {
-                            if (Arrays.equals(existing.getEncoded(), holder.getEncoded())) {
-                                duplicate = true;
-                                break;
-                            }
-                        } catch (Exception ex) {
-                            throw new RuntimeException("Nu am putut compara certificatele din lant", ex);
-                        }
+                    try {
+                        X509CertificateHolder holder = new X509CertificateHolder(pemToDer(pem));
+                        boolean dup = chain.stream().anyMatch(e -> {
+                            try { return Arrays.equals(e.getEncoded(), holder.getEncoded()); }
+                            catch (Exception ex) { return false; }
+                        });
+                        if (!dup) chain.add(holder);
+                    } catch (Exception ex) {
+                        log.warn("buildCmsFromRawSignature: cert invalid in chain, skipping: {}", ex.getMessage());
                     }
-                    if (!duplicate) chain.add(holder);
                 }
             }
+            log.info("buildCmsFromRawSignature: chain size={}", chain.size());
 
-            AlgorithmIdentifier digestAlg =
-                    new DefaultDigestAlgorithmIdentifierFinder().find(new ASN1ObjectIdentifier(OID_SHA256));
+            // ── Algoritmi ─────────────────────────────────────────────────────
+            AlgorithmIdentifier digestAlg = new DefaultDigestAlgorithmIdentifierFinder()
+                    .find(new ASN1ObjectIdentifier(OID_SHA256));
             AlgorithmIdentifier sigAlg = signatureAlgorithmFor(leafHolder);
 
-            SignerIdentifier sid = new SignerIdentifier(new IssuerAndSerialNumber(
-                    leafHolder.getIssuer(),
-                    leafHolder.getSerialNumber()
-            ));
-
+            // ── SignedAttrs ───────────────────────────────────────────────────
             ASN1Set signedAttrs = signedAttrsDerSet != null
                     ? ASN1Set.getInstance(ASN1Primitive.fromByteArray(signedAttrsDerSet))
                     : null;
 
+            // ── Unsigned attrs: TSA timestamp ─────────────────────────────────
+            ASN1Set unsignedAttrs = null;
+            if (tstBytes != null) {
+                Attribute tsAttr = new Attribute(
+                        new ASN1ObjectIdentifier(OID_SIGNATURE_TST),
+                        new DERSet(ASN1Primitive.fromByteArray(tstBytes))
+                );
+                ASN1EncodableVector uaVec = new ASN1EncodableVector();
+                uaVec.add(tsAttr);
+                unsignedAttrs = new DERSet(uaVec);
+                log.info("buildCmsFromRawSignature: TSA timestamp adaugat ca unsignedAttr");
+            }
+
+            // ── SignerInfo ────────────────────────────────────────────────────
+            SignerIdentifier sid = new SignerIdentifier(new IssuerAndSerialNumber(
+                    leafHolder.getIssuer(), leafHolder.getSerialNumber()));
+
             SignerInfo signerInfo = new SignerInfo(
-                    sid,
-                    digestAlg,
-                    signedAttrs,
-                    sigAlg,
+                    sid, digestAlg, signedAttrs, sigAlg,
                     new DEROctetString(signatureBytes),
-                    null
+                    unsignedAttrs  // ← timestamp RFC 3161
             );
 
+            // ── Certificate bag ───────────────────────────────────────────────
             ASN1EncodableVector certVector = new ASN1EncodableVector();
             for (X509CertificateHolder holder : chain) certVector.add(holder.toASN1Structure());
 
@@ -226,14 +284,20 @@ final class DerCmsSupport {
         }
     }
 
+    // Overload backward-compat (fara TSA)
+    static byte[] buildCmsFromRawSignature(String signByteBase64,
+                                           String certPem,
+                                           List<String> chainPem,
+                                           byte[] signedAttrsDerSet) {
+        return buildCmsFromRawSignature(signByteBase64, certPem, chainPem, signedAttrsDerSet, null);
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static AlgorithmIdentifier signatureAlgorithmFor(X509CertificateHolder holder) {
-        String pkAlg = holder.getSubjectPublicKeyInfo()
-                .getAlgorithm().getAlgorithm().getId();
-        if (OID_EC_PUBLIC_KEY.equals(pkAlg)) {
+        String pkAlg = holder.getSubjectPublicKeyInfo().getAlgorithm().getAlgorithm().getId();
+        if (OID_EC_PUBLIC_KEY.equals(pkAlg))
             return new AlgorithmIdentifier(new ASN1ObjectIdentifier(OID_ECDSA_SHA256));
-        }
         return new AlgorithmIdentifier(new ASN1ObjectIdentifier(OID_RSA), DERNull.INSTANCE);
     }
 
@@ -241,9 +305,7 @@ final class DerCmsSupport {
         try {
             CertificateFactory cf = CertificateFactory.getInstance("X.509");
             return (X509Certificate) cf.generateCertificate(new java.io.ByteArrayInputStream(der));
-        } catch (Exception e) {
-            throw new RuntimeException("Certificatul X.509 nu a putut fi interpretat", e);
-        }
+        } catch (Exception e) { throw new RuntimeException("Certificat X.509 invalid", e); }
     }
 
     static byte[] pemToDer(String pem) {
