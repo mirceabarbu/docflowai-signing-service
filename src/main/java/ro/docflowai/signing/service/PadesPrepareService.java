@@ -60,7 +60,8 @@ public class PadesPrepareService extends Base64PdfSupport {
                     Boolean.TRUE.equals(request.useSignedAttributes),
                     signerCertDerFinal
             );
-            int estimatedSignatureSize = 32768;
+            // 65536 = suficient pentru CMS cu TSA token DigiCert (~6KB) + chain STS (~4KB)
+            int estimatedSignatureSize = 65536;
             signer.signExternalContainer(blank, estimatedSignatureSize);
 
             PrepareResponse out = new PrepareResponse();
