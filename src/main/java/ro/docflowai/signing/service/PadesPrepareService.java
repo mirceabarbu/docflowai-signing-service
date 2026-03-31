@@ -16,9 +16,7 @@ import ro.docflowai.signing.dto.PrepareResponse;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
-import java.util.ArrayList;
 import java.util.Base64;
-import java.util.List;
 
 @Service
 public class PadesPrepareService extends Base64PdfSupport {
@@ -42,19 +40,7 @@ public class PadesPrepareService extends Base64PdfSupport {
             if (request.contactInfo != null) appearance.setContact(request.contactInfo);
             appearance.setLayer2Text(buildLayer2Text(request));
 
-            List<String> chain = new ArrayList<>();
-            if (request.certificatePem != null && !request.certificatePem.isBlank()) {
-                chain.add(request.certificatePem);
-            }
-            if (request.certificateChainPem != null) {
-                chain.addAll(request.certificateChainPem);
-            }
-
-            CapturingBlankContainer blank = new CapturingBlankContainer(
-                    request.subFilter,
-                    Boolean.TRUE.equals(request.useSignedAttributes),
-                    chain
-            );
+            CapturingBlankContainer blank = new CapturingBlankContainer(request.subFilter, Boolean.TRUE.equals(request.useSignedAttributes));
             int estimatedSignatureSize = 32768;
             signer.signExternalContainer(blank, estimatedSignatureSize);
 
@@ -82,25 +68,20 @@ public class PadesPrepareService extends Base64PdfSupport {
     static class CapturingBlankContainer implements IExternalSignatureContainer {
         private final String subFilter;
         private final boolean useSignedAttributes;
-        private final List<String> certificateChainPem;
         byte[] documentDigest;
         String toBeSignedDigestBase64;
 
-        CapturingBlankContainer(String subFilter, boolean useSignedAttributes, List<String> certificateChainPem) {
+        CapturingBlankContainer(String subFilter, boolean useSignedAttributes) {
             this.subFilter = subFilter;
             this.useSignedAttributes = useSignedAttributes;
-            this.certificateChainPem = certificateChainPem;
         }
 
         @Override
         public byte[] sign(InputStream data) {
             documentDigest = DerCmsSupport.sha256(data);
             if (useSignedAttributes) {
-                toBeSignedDigestBase64 = DerCmsSupport.calcPdfPkcs7SignedAttrsHashBase64(
-                        documentDigest,
-                        certificateChainPem,
-                        PdfSigner.CryptoStandard.CADES
-                );
+                byte[] signedAttrs = DerCmsSupport.buildSignedAttrsDer(documentDigest);
+                toBeSignedDigestBase64 = DerCmsSupport.calcSignedAttrsHashBase64(signedAttrs);
             } else {
                 toBeSignedDigestBase64 = Base64.getEncoder().encodeToString(documentDigest);
             }
