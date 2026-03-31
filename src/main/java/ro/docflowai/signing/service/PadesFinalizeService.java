@@ -80,6 +80,13 @@ public class PadesFinalizeService extends Base64PdfSupport {
             byte[] contentToSign = buildByteRangeContent(preparedPdfBytes, byteRange);
             log.info("finalizeSignature: contentToSign size={} bytes", contentToSign.length);
 
+            // ── DIAGNOSTIC b240: logam SHA256 al contentToSign ──────────────────
+            // Trebuie sa fie IDENTIC cu documentDigest din prepare pentru acelasi camp
+            byte[] contentHash = DerCmsSupport.sha256(contentToSign);
+            log.info("DIAGNOSTIC finalizeSignature: documentDigest (SHA256 ByteRange)={}",
+                    java.util.Base64.getEncoder().encodeToString(contentHash));
+            // ── END DIAGNOSTIC ───────────────────────────────────────────────────
+
             // ── PASUL 3: Construim CMS (consistent cu prepare) ────────────────
             byte[] documentDigest = DerCmsSupport.sha256(contentToSign);
 

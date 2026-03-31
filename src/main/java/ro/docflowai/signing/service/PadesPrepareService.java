@@ -18,6 +18,7 @@ import ro.docflowai.signing.dto.PrepareResponse;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.util.Arrays;
 import java.util.Base64;
 
 @Service
@@ -35,9 +36,10 @@ public class PadesPrepareService extends Base64PdfSupport {
             byte[] signerCertDer = null;
             if (request.signerCertificatePem != null && !request.signerCertificatePem.isBlank()) {
                 signerCertDer = DerCmsSupport.pemToDer(request.signerCertificatePem);
-                log.info("prepare: signerCertificatePem primit — signing-certificate-v2 va fi inclus in signedAttrs");
+                log.info("prepare: signerIndex={}, signerCertificatePem primit — signing-certificate-v2 va fi inclus in signedAttrs",
+                    request.signerIndex);
             } else {
-                log.warn("prepare: signerCertificatePem absent — signedAttrs fara signing-certificate-v2 (DSS warning)");
+                log.warn("prepare: signerIndex={} — signerCertificatePem absent, signedAttrs fara signing-certificate-v2", request.signerIndex);
             }
 
             byte[] pdfBytes = decodeBase64(request.pdfBase64);
@@ -70,8 +72,41 @@ public class PadesPrepareService extends Base64PdfSupport {
             int estimatedSignatureSize = 65536;
             signer.signExternalContainer(blank, estimatedSignatureSize);
 
+            byte[] preparedBytes = preparedOut.toByteArray();
+
+            // ── DIAGNOSTIC b240: verifica daca iText pastreaza bytes originale in append mode ──
+            // CRITIC pentru multi-semnatar: primii pdfBytes.length bytes din preparedBytes
+            // TREBUIE sa fie IDENTICI cu pdfBytes. Daca nu, iText corupte semnaturile anterioare.
+            if (preparedBytes.length < pdfBytes.length) {
+                log.error("DIAGNOSTIC CRITIC: preparedBytes.length={} < pdfBytes.length={} — iText a redus dimensiunea PDF (corruptie sigura!)",
+                        preparedBytes.length, pdfBytes.length);
+            } else {
+                boolean originalPreserved = java.util.Arrays.equals(
+                        pdfBytes,
+                        java.util.Arrays.copyOf(preparedBytes, pdfBytes.length)
+                );
+                if (originalPreserved) {
+                    log.info("DIAGNOSTIC OK: primii {} bytes (original) sunt IDENTICI in preparedPdf — sig anterioare vor fi valide",
+                            pdfBytes.length);
+                } else {
+                    // Gasim primul byte diferit pentru debugging
+                    int firstDiff = -1;
+                    for (int di = 0; di < pdfBytes.length; di++) {
+                        if (pdfBytes[di] != preparedBytes[di]) { firstDiff = di; break; }
+                    }
+                    log.error("DIAGNOSTIC CRITIC: bytes originale MODIFICATE la pozitia {} — iText nu face append pur, sig anterioare vor fi INVALIDE!",
+                            firstDiff);
+                    log.error("  Original byte[{}]=0x{}  Prepared byte[{}]=0x{}",
+                            firstDiff, String.format("%02x", pdfBytes[firstDiff] & 0xFF),
+                            firstDiff, String.format("%02x", preparedBytes[firstDiff] & 0xFF));
+                }
+            }
+            log.info("prepare: originalSize={} bytes, preparedSize={} bytes, delta={} bytes (noua revisie)",
+                    pdfBytes.length, preparedBytes.length, preparedBytes.length - pdfBytes.length);
+            // ── END DIAGNOSTIC ────────────────────────────────────────────────────────────────
+
             PrepareResponse out = new PrepareResponse();
-            out.preparedPdfBase64 = Base64.getEncoder().encodeToString(preparedOut.toByteArray());
+            out.preparedPdfBase64 = Base64.getEncoder().encodeToString(preparedBytes);
             out.documentDigestBase64 = Base64.getEncoder().encodeToString(blank.documentDigest);
             out.toBeSignedDigestBase64 = blank.toBeSignedDigestBase64;
             out.fieldName = request.fieldName;

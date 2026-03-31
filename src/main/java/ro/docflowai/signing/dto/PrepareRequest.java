@@ -21,4 +21,7 @@ public class PrepareRequest {
     // b236: certificatul semnatarului (PEM) — necesar pentru signing-certificate-v2 în signedAttrs
     // Se trimite DOAR când e cunoscut înaintea hash-ului (fluxul b236: prepare după OAuth)
     public String signerCertificatePem;
+    // b240: index 0=primul semnatar, 1=al doilea, etc.
+    // Folosit pentru diagnostice si pentru logare
+    public Integer signerIndex;
 }
