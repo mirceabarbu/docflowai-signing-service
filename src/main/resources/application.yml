@@ -5,11 +5,8 @@ spring:
   application:
     name: docflowai-sts-pades-service
 
-APP_MODE: ${APP_MODE:real}
-
 # RFC 3161 Timestamp Authority
-# DigiCert e gratuit, nu necesita autentificare, accepta SHA-256
-# Fallback: http://freetsa.org/tsr
+# DigiCert e gratuit, fara autentificare, accepta SHA-256
 tsa:
   url: ${TSA_URL:http://timestamp.digicert.com}
 
