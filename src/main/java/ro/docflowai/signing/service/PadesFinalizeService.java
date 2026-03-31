@@ -80,11 +80,45 @@ public class PadesFinalizeService extends Base64PdfSupport {
             byte[] contentToSign = buildByteRangeContent(preparedPdfBytes, byteRange);
             log.info("finalizeSignature: contentToSign size={} bytes", contentToSign.length);
 
-            // ── DIAGNOSTIC b240: logam SHA256 al contentToSign ──────────────────
-            // Trebuie sa fie IDENTIC cu documentDigest din prepare pentru acelasi camp
+            // ── DIAGNOSTIC b241: logam SHA256 al contentToSign
             byte[] contentHash = DerCmsSupport.sha256(contentToSign);
-            log.info("DIAGNOSTIC finalizeSignature: documentDigest (SHA256 ByteRange)={}",
+            log.info("DIAGNOSTIC finalizeSignature: documentDigest={}",
                     java.util.Base64.getEncoder().encodeToString(contentHash));
+
+            // ── DIAGNOSTIC b241: verificam TOATE campurile de semnatura din PDF ──────
+            // Citim ByteRange-ul FIECARUI camp si verificam daca hash-ul e consistent
+            try {
+                PdfDocument docCheck = new PdfDocument(new PdfReader(new ByteArrayInputStream(preparedPdfBytes)));
+                com.itextpdf.forms.PdfAcroForm acroCheck = com.itextpdf.forms.PdfAcroForm.getAcroForm(docCheck, false);
+                if (acroCheck != null) {
+                    acroCheck.getAllFormFields().forEach((fname, field) -> {
+                        try {
+                            PdfDictionary sigVal = (PdfDictionary) field.getValue();
+                            if (sigVal == null) return;
+                            // Verificam daca are ByteRange (adica e camp de semnatura deja aplicata)
+                            PdfArray existingBr = sigVal.getAsArray(PdfName.ByteRange);
+                            if (existingBr == null || existingBr.size() < 4) return;
+                            long s0 = existingBr.getAsNumber(0).longValue();
+                            long s1 = existingBr.getAsNumber(1).longValue();
+                            long s2 = existingBr.getAsNumber(2).longValue();
+                            long s3 = existingBr.getAsNumber(3).longValue();
+                            log.info("EXISTING SIG FIELD '{}': ByteRange=[{},{},{},{}]", fname, s0, s1, s2, s3);
+                            // Citim bytes acoperiti de ByteRange-ul existent
+                            ByteArrayOutputStream existingContent = new ByteArrayOutputStream();
+                            existingContent.write(preparedPdfBytes, (int)s0, (int)s1);
+                            existingContent.write(preparedPdfBytes, (int)s2, (int)s3);
+                            byte[] existingHash = DerCmsSupport.sha256(existingContent.toByteArray());
+                            log.info("EXISTING SIG FIELD '{}': SHA256(ByteRange)={}", fname,
+                                    java.util.Base64.getEncoder().encodeToString(existingHash));
+                        } catch (Exception ex) {
+                            log.warn("EXISTING SIG FIELD check error for '{}': {}", fname, ex.getMessage());
+                        }
+                    });
+                }
+                docCheck.close();
+            } catch (Exception diagEx) {
+                log.warn("DIAGNOSTIC getAllFields error: {}", diagEx.getMessage());
+            }
             // ── END DIAGNOSTIC ───────────────────────────────────────────────────
 
             // ── PASUL 3: Construim CMS (consistent cu prepare) ────────────────
