@@ -1,7 +1,6 @@
 package ro.docflowai.signing.service;
 
 import com.itextpdf.forms.PdfAcroForm;
-import com.itextpdf.forms.PdfFormCreator;
 import com.itextpdf.forms.fields.PdfFormField;
 import com.itextpdf.kernel.pdf.PdfArray;
 import com.itextpdf.kernel.pdf.PdfDictionary;
@@ -140,7 +139,7 @@ public class PadesFinalizeService extends Base64PdfSupport {
         PdfReader reader = new PdfReader(new ByteArrayInputStream(pdfBytes));
         PdfDocument doc = new PdfDocument(reader);
         try {
-            PdfAcroForm acroForm = PdfFormCreator.getAcroForm(doc, false);
+            PdfAcroForm acroForm = PdfAcroForm.getAcroForm(doc, false);
             if (acroForm == null) throw new RuntimeException("AcroForm negăsit în PDF");
 
             PdfFormField field = acroForm.getField(fieldName);
