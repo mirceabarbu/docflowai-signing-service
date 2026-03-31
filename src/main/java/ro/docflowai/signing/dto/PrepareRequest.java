@@ -24,4 +24,8 @@ public class PrepareRequest {
     // b240: index 0=primul semnatar, 1=al doilea, etc.
     // Folosit pentru diagnostice si pentru logare
     public Integer signerIndex;
+    // b242: true = câmpul /Sig există deja în PDF (pre-creat la flow creation)
+    // Java NU mai crează câmp nou, NU mai setează appearance rect
+    // → AcroForm Fields și Page Annots rămân NEATINSE în incremental update
+    public Boolean fieldAlreadyExists;
 }
