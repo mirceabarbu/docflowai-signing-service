@@ -46,12 +46,18 @@ public class PadesPrepareService extends Base64PdfSupport {
             PdfSigner signer = new PdfSigner(reader, preparedOut, new StampingProperties().useAppendMode());
             signer.setFieldName(request.fieldName);
 
+            // NOT_CERTIFIED: nu adaugam /DocMDP — esential pentru multi-semnatar
+            // Daca e setat CERTIFIED, Adobe invalideaza sig_1 cand sig_2 este adaugata
+            signer.setCertificationLevel(PdfSigner.NOT_CERTIFIED);
+
             PdfSignatureAppearance appearance = signer.getSignatureAppearance();
             appearance.setPageRect(new Rectangle(request.x, request.y, request.width, request.height));
             appearance.setPageNumber(request.page);
             if (request.reason != null) appearance.setReason(request.reason);
             if (request.location != null) appearance.setLocation(request.location);
             if (request.contactInfo != null) appearance.setContact(request.contactInfo);
+            // DESCRIPTION: afiseaza doar text, fara iconita/lacatul default iText
+            appearance.setRenderingMode(PdfSignatureAppearance.RenderingMode.DESCRIPTION);
             appearance.setLayer2Text(buildLayer2Text(request));
 
             final byte[] signerCertDerFinal = signerCertDer;
@@ -87,9 +93,15 @@ public class PadesPrepareService extends Base64PdfSupport {
     }
 
     private String buildLayer2Text(PrepareRequest request) {
-        String role = request.signerRole == null || request.signerRole.isBlank()
-                ? "Semnatar" : request.signerRole;
-        return "Semnat digital QES\n" + request.signerName + "\n" + role;
+        // Format vizual: linie 1 = "Semnat digital QES"
+        //                linie 2 = Nume semnatar
+        //                linie 3 = Rol (SEMNATAR, DIRECTOR, etc.)
+        // Fara iconita (RenderingMode.DESCRIPTION + text only)
+        String name = (request.signerName == null || request.signerName.isBlank())
+                ? "Semnatar" : request.signerName;
+        String role = (request.signerRole == null || request.signerRole.isBlank())
+                ? "SEMNATAR" : request.signerRole.toUpperCase();
+        return "Semnat digital QES\n" + name + "\n" + role;
     }
 
     static class CapturingBlankContainer implements IExternalSignatureContainer {
