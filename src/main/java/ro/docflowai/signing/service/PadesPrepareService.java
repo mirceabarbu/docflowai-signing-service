@@ -88,18 +88,17 @@ public class PadesPrepareService extends Base64PdfSupport {
                 log.info("prepare: câmp NOU creat la pozitia ({},{}) {}x{}",
                         request.x, request.y, request.width, request.height);
             } else {
-                // Câmp EXISTENT pre-creat de Node la flow creation.
-                // CRITIC: NU setăm NICIUN appearance (setLayer2Text/setRenderingMode/setPageRect).
-                // Orice scriere în appearance stream-ul câmpului existent modifică bytes din
-                // revision-ul anterior, corupând semnăturile deja aplicate.
-                // Vizualul câmpului vine din celula cartuș desenată la creare flux.
-                // iText va folosi câmpul existent as-is și va adăuga doar ByteRange+Contents.
+                // Câmp EXISTENT pre-creat de Node la flow creation:
+                // NU setăm rect — iText folosește rect-ul câmpului existent
+                // NU setăm appearance — aspect minimal (doar semnatura electronică)
+                // Rezultat: AcroForm Fields și Page Annots NU sunt modificate în incremental update
                 PdfSignatureAppearance appearance = signer.getSignatureAppearance();
                 if (request.reason      != null) appearance.setReason(request.reason);
                 if (request.location    != null) appearance.setLocation(request.location);
                 if (request.contactInfo != null) appearance.setContact(request.contactInfo);
-                // NU: setRenderingMode, setLayer2Text, setPageRect — toate modifică bytes existente
-                log.info("prepare: câmp EXISTENT folosit — appearance NEATINS pentru integritate PAdES");
+                appearance.setRenderingMode(PdfSignatureAppearance.RenderingMode.DESCRIPTION);
+                appearance.setLayer2Text(buildLayer2TextMinimal(request));
+                log.info("prepare: câmp EXISTENT folosit — fara modificare AcroForm/Annots");
             }
 
             final byte[] signerCertDerFinal = signerCertDer;
@@ -157,18 +156,16 @@ public class PadesPrepareService extends Base64PdfSupport {
         }
     }
 
-    // Aspect câmp semnătură — format final ca în UI DocFlowAI
+    // Aspect câmp semnătură — format final:
     // Linia 1: "Semnat digital"
-    // Linia 2: "Nume · Data"
+    // Linia 2: "Nume · 01.04.2026, 10:36"  (ora României)
     // Linia 3: "STS Cloud QES"
     private String buildLayer2Text(PrepareRequest request) {
         String name = (request.signerName == null || request.signerName.isBlank())
                 ? "Semnatar" : request.signerName;
-        // Timezone Romania — Railway ruleaza pe UTC
         String dateStr = java.time.ZonedDateTime
                 .now(java.time.ZoneId.of("Europe/Bucharest"))
                 .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm"));
-        // \u00B7 = punct median ·
         return "Semnat digital\n" + name + " \u00B7 " + dateStr + "\nSTS Cloud QES";
     }
 
