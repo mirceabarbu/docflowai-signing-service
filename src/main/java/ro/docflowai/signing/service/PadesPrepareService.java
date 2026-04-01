@@ -88,9 +88,18 @@ public class PadesPrepareService extends Base64PdfSupport {
                 log.info("prepare: câmp NOU creat la pozitia ({},{}) {}x{}",
                         request.x, request.y, request.width, request.height);
             } else {
-                // Câmp EXISTENT (fallback — în b248 nu se ajunge niciodată aici).
-                // ZERO appearance — orice set* pe PdfSignatureAppearance modifică bytes existente.
-                log.warn("prepare b248: fieldAlreadyExists=true — ZERO appearance (fallback neașteptat)");
+                // b251: camp EXISTENT creat de iText via /api/pades/create-fields.
+                // iText recunoaste propriile campuri → NU are nevoie de "reparare".
+                // Putem seta appearance (setLayer2Text) safe — iText scrie MINIM in incremental update.
+                // Aspectul textual apare in celula cartusului desenata de pdf-lib.
+                PdfSignatureAppearance appearance = signer.getSignatureAppearance();
+                if (request.reason      != null) appearance.setReason(request.reason);
+                if (request.location    != null) appearance.setLocation(request.location);
+                if (request.contactInfo != null) appearance.setContact(request.contactInfo);
+                appearance.setRenderingMode(PdfSignatureAppearance.RenderingMode.DESCRIPTION);
+                appearance.setLayer2Text(buildLayer2Text(request));
+                log.info("prepare b251: camp iText EXISTENT '{}' — appearance setata safe",
+                        request.fieldName);
             }
 
             final byte[] signerCertDerFinal = signerCertDer;
@@ -153,8 +162,7 @@ public class PadesPrepareService extends Base64PdfSupport {
                 ? "Semnatar" : request.signerName;
         String role = (request.signerRole == null || request.signerRole.isBlank())
                 ? "SEMNATAR" : request.signerRole.toUpperCase();
-        String dateStr = java.time.ZonedDateTime
-                .now(java.time.ZoneId.of("Europe/Bucharest"))
+        String dateStr = java.time.ZonedDateTime.now(java.time.ZoneId.of("Europe/Bucharest"))
                 .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm"));
         return "Semnat digital\n" + name + " \u00B7 " + dateStr + "\nSTS Cloud QES";
     }

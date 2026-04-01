@@ -19,8 +19,8 @@ public class HealthController {
     private static final Logger log = LoggerFactory.getLogger(HealthController.class);
 
     // ── Versiune hardcodată — schimbă la fiecare build ─────────────────────
-    private static final String BUILD_VERSION = "b248";
-    private static final String BUILD_DATE    = "2026-04-01-b248";
+    private static final String BUILD_VERSION = "b251";
+    private static final String BUILD_DATE    = "2026-04-01-b251";
     // ────────────────────────────────────────────────────────────────────────
 
     @Value("${spring.application.name:docflowai-sts-pades-service}")
