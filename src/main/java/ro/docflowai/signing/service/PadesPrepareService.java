@@ -88,13 +88,9 @@ public class PadesPrepareService extends Base64PdfSupport {
                 log.info("prepare: câmp NOU creat la pozitia ({},{}) {}x{}",
                         request.x, request.y, request.width, request.height);
             } else {
-                // Câmp EXISTENT pre-creat în revizia 0 (stampFooterOnPdf la creare flux).
-                // ABSOLUT ZERO interacțiune cu appearance stream.
-                // Niciun set* pe PdfSignatureAppearance — orice apel modifică bytes existente
-                // și corupe semnăturile anterioare.
-                // iText găsește câmpul după fieldName și adaugă NUMAI ByteRange+Contents.
-                log.info("prepare b247: câmp EXISTENT '{}' — ZERO appearance (PAdES multi-sign)",
-                        request.fieldName);
+                // Câmp EXISTENT (fallback — în b248 nu se ajunge niciodată aici).
+                // ZERO appearance — orice set* pe PdfSignatureAppearance modifică bytes existente.
+                log.warn("prepare b248: fieldAlreadyExists=true — ZERO appearance (fallback neașteptat)");
             }
 
             final byte[] signerCertDerFinal = signerCertDer;
@@ -157,7 +153,10 @@ public class PadesPrepareService extends Base64PdfSupport {
                 ? "Semnatar" : request.signerName;
         String role = (request.signerRole == null || request.signerRole.isBlank())
                 ? "SEMNATAR" : request.signerRole.toUpperCase();
-        return "Semnat digital QES\n" + name + "\n" + role;
+        String dateStr = java.time.ZonedDateTime
+                .now(java.time.ZoneId.of("Europe/Bucharest"))
+                .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm"));
+        return "Semnat digital\n" + name + " \u00B7 " + dateStr + "\nSTS Cloud QES";
     }
 
     // Minimal text pentru câmpuri pre-create (aspectul vizual vine din celula pre-desenată)
