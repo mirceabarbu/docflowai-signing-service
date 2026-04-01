@@ -156,21 +156,22 @@ public class PadesPrepareService extends Base64PdfSupport {
         }
     }
 
+    // Aspect câmp semnătură — format final ca în UI DocFlowAI
+    // Linia 1: "Semnat digital"
+    // Linia 2: "Nume · Data"
+    // Linia 3: "STS Cloud QES"
     private String buildLayer2Text(PrepareRequest request) {
         String name = (request.signerName == null || request.signerName.isBlank())
                 ? "Semnatar" : request.signerName;
-        String role = (request.signerRole == null || request.signerRole.isBlank())
-                ? "SEMNATAR" : request.signerRole.toUpperCase();
-        return "Semnat digital QES\n" + name + "\n" + role;
+        String dateStr = java.time.LocalDateTime.now()
+                .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm"));
+        String line2 = name + " \u00B7 " + dateStr;  // \u00B7 = punct median ·
+        return "Semnat digital\n" + line2 + "\nSTS Cloud QES";
     }
 
-    // Minimal text pentru câmpuri pre-create (aspectul vizual vine din celula pre-desenată)
+    // Același format pentru câmpuri pre-create (b244: identic cu buildLayer2Text)
     private String buildLayer2TextMinimal(PrepareRequest request) {
-        String name = (request.signerName == null || request.signerName.isBlank())
-                ? "Semnatar" : request.signerName;
-        String role = (request.signerRole == null || request.signerRole.isBlank())
-                ? "SEMNATAR" : request.signerRole.toUpperCase();
-        return name + "\n" + role;
+        return buildLayer2Text(request);
     }
 
     static class CapturingBlankContainer implements IExternalSignatureContainer {
