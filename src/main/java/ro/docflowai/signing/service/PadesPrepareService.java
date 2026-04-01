@@ -163,18 +163,14 @@ public class PadesPrepareService extends Base64PdfSupport {
                 ? "SEMNATAR" : request.signerRole.toUpperCase());
         String dateStr = java.time.ZonedDateTime.now(java.time.ZoneId.of("Europe/Bucharest"))
                 .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm"));
-        return "Semnat digital QES
-" +
-                name + "
-" +
-                role + "
-" +
-                dateStr + "
-" +
+        return "Semnat digital QES\n" +
+                name + "\n" +
+                role + "\n" +
+                dateStr + "\n" +
                 "DocFlowAI | STS Cloud QES";
     }
 
-    // Varianta premium, dar sigura: doar text Description, fara sa schimbam mecanismul PAdES.
+    // Varianta premium, dar sigura: doar text description, fara sa schimbam mecanismul PAdES.
     private String buildLayer2TextMinimal(PrepareRequest request) {
         String name = normalize((request.signerName == null || request.signerName.isBlank())
                 ? "Semnatar" : request.signerName);
@@ -182,14 +178,10 @@ public class PadesPrepareService extends Base64PdfSupport {
                 ? "SEMNATAR" : request.signerRole.toUpperCase());
         String dateStr = java.time.ZonedDateTime.now(java.time.ZoneId.of("Europe/Bucharest"))
                 .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm"));
-        return "Semnat digital QES
-" +
-                name + "
-" +
-                role + "
-" +
-                dateStr + "
-" +
+        return "Semnat digital QES\n" +
+                name + "\n" +
+                role + "\n" +
+                dateStr + "\n" +
                 "DocFlowAI | STS Cloud QES";
     }
 
