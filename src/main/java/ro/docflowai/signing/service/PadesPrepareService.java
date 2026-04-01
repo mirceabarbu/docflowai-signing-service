@@ -157,26 +157,37 @@ public class PadesPrepareService extends Base64PdfSupport {
     }
 
     private String buildLayer2Text(PrepareRequest request) {
-        String name = (request.signerName == null || request.signerName.isBlank())
-                ? "Semnatar" : request.signerName;
-        String role = (request.signerRole == null || request.signerRole.isBlank())
-                ? "SEMNATAR" : request.signerRole.toUpperCase();
-        String dateStr = java.time.ZonedDateTime.now(java.time.ZoneId.of("Europe/Bucharest"))
-                .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm"));
-        return "Semnat digital\n" + name + " \u00B7 " + dateStr + "\nSTS Cloud QES";
+        return buildLayer2TextMinimal(request);
     }
 
-    // Minimal text pentru câmpuri desenate de service: nume din certificat + detalii semnare.
-    // Rolul și funcția sunt deja desenate în caseta statică din PDF-ul inițial.
     private String buildLayer2TextMinimal(PrepareRequest request) {
-        String name = (request.signerName == null || request.signerName.isBlank())
-                ? "Semnatar" : request.signerName;
+        String name = normalize((request.signerName == null || request.signerName.isBlank())
+                ? "Semnatar" : request.signerName);
+        String role = normalize((request.signerRole == null || request.signerRole.isBlank())
+                ? "SEMNATAR" : request.signerRole.toUpperCase());
+        String functie = normalize(request.signerFunction == null ? "" : request.signerFunction);
         String dateStr = java.time.ZonedDateTime.now(java.time.ZoneId.of("Europe/Bucharest"))
                 .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm"));
-        return name + "\n"
-                + "Semnat digital QES\n"
-                + dateStr + "\n"
-                + "DocFlowAI | STS Cloud QES";
+
+        StringBuilder sb = new StringBuilder();
+        if (!role.isBlank()) sb.append(role).append("\n");
+        if (!functie.isBlank()) sb.append(functie).append("\n");
+        if (!name.isBlank()) sb.append(name).append("\n");
+        sb.append("\n");
+        sb.append("Semnat digital QES\n");
+        sb.append(dateStr).append("\n");
+        sb.append("DocFlowAI | STS Cloud QES");
+        return sb.toString();
+    }
+
+    private String normalize(String s) {
+        return s == null ? "" : s
+                .replace("ă", "a").replace("â", "a").replace("î", "i")
+                .replace("ș", "s").replace("ş", "s")
+                .replace("ț", "t").replace("ţ", "t")
+                .replace("Ă", "A").replace("Â", "A").replace("Î", "I")
+                .replace("Ș", "S").replace("Ş", "S")
+                .replace("Ț", "T").replace("Ţ", "T");
     }
 
     static class CapturingBlankContainer implements IExternalSignatureContainer {
