@@ -8,6 +8,7 @@ public class PrepareRequest {
     @NotBlank public String fieldName;
     @NotBlank public String signerName;
     public String signerRole;
+    public String signerFunction;
     public String reason;
     public String location;
     public String contactInfo;

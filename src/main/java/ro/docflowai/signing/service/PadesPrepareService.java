@@ -157,32 +157,34 @@ public class PadesPrepareService extends Base64PdfSupport {
     }
 
     private String buildLayer2Text(PrepareRequest request) {
-        String name = normalize((request.signerName == null || request.signerName.isBlank())
-                ? "Semnatar" : request.signerName);
-        String role = normalize((request.signerRole == null || request.signerRole.isBlank())
-                ? "SEMNATAR" : request.signerRole.toUpperCase());
-        String dateStr = java.time.ZonedDateTime.now(java.time.ZoneId.of("Europe/Bucharest"))
-                .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm"));
-        return "Semnat digital QES\n" +
-                name + "\n" +
-                role + "\n" +
-                dateStr + "\n" +
-                "DocFlowAI | STS Cloud QES";
+        return buildSignatureCardText(request);
     }
 
     // Varianta premium, dar sigura: doar text description, fara sa schimbam mecanismul PAdES.
     private String buildLayer2TextMinimal(PrepareRequest request) {
-        String name = normalize((request.signerName == null || request.signerName.isBlank())
-                ? "Semnatar" : request.signerName);
+        return buildSignatureCardText(request);
+    }
+
+    private String buildSignatureCardText(PrepareRequest request) {
         String role = normalize((request.signerRole == null || request.signerRole.isBlank())
                 ? "SEMNATAR" : request.signerRole.toUpperCase());
+        String name = normalize((request.signerName == null || request.signerName.isBlank())
+                ? "Semnatar" : request.signerName);
+        String function = normalize(request.signerFunction == null ? "" : request.signerFunction.trim());
         String dateStr = java.time.ZonedDateTime.now(java.time.ZoneId.of("Europe/Bucharest"))
                 .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm"));
-        return "Semnat digital QES\n" +
-                name + "\n" +
-                role + "\n" +
-                dateStr + "\n" +
-                "DocFlowAI | STS Cloud QES";
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(role).append("\n");
+        sb.append(name).append("\n");
+        if (!function.isBlank()) {
+            sb.append(function).append("\n");
+        }
+        sb.append("\n");
+        sb.append("Semnat digital QES").append("\n");
+        sb.append(dateStr).append("\n");
+        sb.append("DocFlowAI | STS Cloud QES");
+        return sb.toString();
     }
 
     private String normalize(String s) {
