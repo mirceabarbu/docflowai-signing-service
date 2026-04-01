@@ -157,22 +157,50 @@ public class PadesPrepareService extends Base64PdfSupport {
     }
 
     private String buildLayer2Text(PrepareRequest request) {
-        String name = (request.signerName == null || request.signerName.isBlank())
-                ? "Semnatar" : request.signerName;
-        String role = (request.signerRole == null || request.signerRole.isBlank())
-                ? "SEMNATAR" : request.signerRole.toUpperCase();
+        String name = normalize((request.signerName == null || request.signerName.isBlank())
+                ? "Semnatar" : request.signerName);
+        String role = normalize((request.signerRole == null || request.signerRole.isBlank())
+                ? "SEMNATAR" : request.signerRole.toUpperCase());
         String dateStr = java.time.ZonedDateTime.now(java.time.ZoneId.of("Europe/Bucharest"))
                 .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm"));
-        return "Semnat digital\n" + name + " \u00B7 " + dateStr + "\nSTS Cloud QES";
+        return "Semnat digital QES
+" +
+                name + "
+" +
+                role + "
+" +
+                dateStr + "
+" +
+                "DocFlowAI | STS Cloud QES";
     }
 
-    // Minimal text pentru câmpuri pre-create (aspectul vizual vine din celula pre-desenată)
+    // Varianta premium, dar sigura: doar text Description, fara sa schimbam mecanismul PAdES.
     private String buildLayer2TextMinimal(PrepareRequest request) {
-        String name = (request.signerName == null || request.signerName.isBlank())
-                ? "Semnatar" : request.signerName;
-        String role = (request.signerRole == null || request.signerRole.isBlank())
-                ? "SEMNATAR" : request.signerRole.toUpperCase();
-        return name + "\n" + role;
+        String name = normalize((request.signerName == null || request.signerName.isBlank())
+                ? "Semnatar" : request.signerName);
+        String role = normalize((request.signerRole == null || request.signerRole.isBlank())
+                ? "SEMNATAR" : request.signerRole.toUpperCase());
+        String dateStr = java.time.ZonedDateTime.now(java.time.ZoneId.of("Europe/Bucharest"))
+                .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm"));
+        return "Semnat digital QES
+" +
+                name + "
+" +
+                role + "
+" +
+                dateStr + "
+" +
+                "DocFlowAI | STS Cloud QES";
+    }
+
+    private String normalize(String s) {
+        return s == null ? "" : s
+                .replace("ă", "a").replace("â", "a").replace("î", "i")
+                .replace("ș", "s").replace("ş", "s")
+                .replace("ț", "t").replace("ţ", "t")
+                .replace("Ă", "A").replace("Â", "A").replace("Î", "I")
+                .replace("Ș", "S").replace("Ş", "S")
+                .replace("Ț", "T").replace("Ţ", "T");
     }
 
     static class CapturingBlankContainer implements IExternalSignatureContainer {
