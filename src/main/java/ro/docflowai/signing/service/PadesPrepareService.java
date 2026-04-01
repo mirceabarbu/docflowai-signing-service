@@ -5,6 +5,7 @@ import com.itextpdf.kernel.pdf.PdfDictionary;
 import com.itextpdf.kernel.pdf.PdfName;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.StampingProperties;
+import com.itextpdf.kernel.pdf.canvas.PdfCanvas;
 import com.itextpdf.signatures.IExternalSignatureContainer;
 import com.itextpdf.signatures.PdfSignatureAppearance;
 import com.itextpdf.signatures.PdfSigner;
@@ -20,6 +21,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.util.Arrays;
 import java.util.Base64;
+import java.security.cert.X509Certificate;
 
 /**
  * PadesPrepareService b242
@@ -70,21 +72,29 @@ public class PadesPrepareService extends Base64PdfSupport {
             signer.setCertificationLevel(PdfSigner.NOT_CERTIFIED);
 
             if (!fieldExists) {
-                // Câmp NOU: setăm rect-ul și appearance
-                // Cazul fallback sau flux fără pre-creare câmpuri
+                // Câmp NOU: Java desenează doar chenarul, iar appearance-ul conține textul premium.
+                float rectX = request.x != null ? request.x : 30f;
+                float rectY = request.y != null ? request.y : 30f;
+                float rectW = request.width  != null ? request.width  : 200f;
+                float rectH = request.height != null ? request.height : 50f;
+                int pageNo = request.page != null ? request.page : 1;
+
+                PdfCanvas canvas = new PdfCanvas(signer.getDocument().getPage(pageNo));
+                canvas.saveState();
+                canvas.setLineWidth(0.8f);
+                canvas.setStrokeColorRgb(0.18f, 0.18f, 0.18f);
+                canvas.rectangle(rectX, rectY, rectW, rectH);
+                canvas.stroke();
+                canvas.restoreState();
+
                 PdfSignatureAppearance appearance = signer.getSignatureAppearance();
-                appearance.setPageRect(new Rectangle(
-                        request.x != null ? request.x : 30f,
-                        request.y != null ? request.y : 30f,
-                        request.width  != null ? request.width  : 200f,
-                        request.height != null ? request.height : 50f));
-                appearance.setPageNumber(request.page != null ? request.page : 1);
+                appearance.setPageRect(new Rectangle(rectX, rectY, rectW, rectH));
+                appearance.setPageNumber(pageNo);
                 if (request.reason     != null) appearance.setReason(request.reason);
                 if (request.location   != null) appearance.setLocation(request.location);
                 if (request.contactInfo != null) appearance.setContact(request.contactInfo);
-                // Text pur, fără iconița iText
                 appearance.setRenderingMode(PdfSignatureAppearance.RenderingMode.DESCRIPTION);
-                appearance.setLayer2Text(buildLayer2Text(request));
+                appearance.setLayer2Text(buildLayer2Text(request, signerCertDer));
                 log.info("prepare: câmp NOU creat la pozitia ({},{}) {}x{}",
                         request.x, request.y, request.width, request.height);
             } else {
@@ -97,7 +107,7 @@ public class PadesPrepareService extends Base64PdfSupport {
                 if (request.location    != null) appearance.setLocation(request.location);
                 if (request.contactInfo != null) appearance.setContact(request.contactInfo);
                 appearance.setRenderingMode(PdfSignatureAppearance.RenderingMode.DESCRIPTION);
-                appearance.setLayer2Text(buildLayer2TextMinimal(request));
+                appearance.setLayer2Text(buildLayer2TextMinimal(request, signerCertDer));
                 log.info("prepare: câmp EXISTENT folosit — fara modificare AcroForm/Annots");
             }
 
@@ -156,35 +166,46 @@ public class PadesPrepareService extends Base64PdfSupport {
         }
     }
 
-    private String buildLayer2Text(PrepareRequest request) {
-        return buildSignatureCardText(request);
-    }
-
-    // Varianta premium, dar sigura: doar text description, fara sa schimbam mecanismul PAdES.
-    private String buildLayer2TextMinimal(PrepareRequest request) {
-        return buildSignatureCardText(request);
-    }
-
-    private String buildSignatureCardText(PrepareRequest request) {
+    private String buildLayer2Text(PrepareRequest request, byte[] signerCertDer) {
         String role = normalize((request.signerRole == null || request.signerRole.isBlank())
                 ? "SEMNATAR" : request.signerRole.toUpperCase());
-        String name = normalize((request.signerName == null || request.signerName.isBlank())
-                ? "Semnatar" : request.signerName);
-        String function = normalize(request.signerFunction == null ? "" : request.signerFunction.trim());
+        String function = normalize(request.signerFunction == null ? "" : request.signerFunction);
+        String name = normalize(resolveDisplayName(request, signerCertDer));
         String dateStr = java.time.ZonedDateTime.now(java.time.ZoneId.of("Europe/Bucharest"))
                 .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm"));
 
         StringBuilder sb = new StringBuilder();
-        sb.append(role).append("\n");
-        sb.append(name).append("\n");
-        if (!function.isBlank()) {
-            sb.append(function).append("\n");
-        }
-        sb.append("\n");
-        sb.append("Semnat digital QES").append("\n");
-        sb.append(dateStr).append("\n");
-        sb.append("DocFlowAI | STS Cloud QES");
+        sb.append(role);
+        if (!function.isBlank()) sb.append("\n").append(function);
+        if (!name.isBlank()) sb.append("\n").append(name);
+        sb.append("\n\nSemnat digital QES");
+        sb.append("\n").append(dateStr);
+        sb.append("\nDocFlowAI | STS Cloud QES");
         return sb.toString();
+    }
+
+    private String buildLayer2TextMinimal(PrepareRequest request, byte[] signerCertDer) {
+        return buildLayer2Text(request, signerCertDer);
+    }
+
+    private String resolveDisplayName(PrepareRequest request, byte[] signerCertDer) {
+        try {
+            if (signerCertDer != null && signerCertDer.length > 0) {
+                X509Certificate cert = DerCmsSupport.parseCertificate(signerCertDer);
+                String dn = cert.getSubjectX500Principal().getName();
+                for (String part : dn.split(",")) {
+                    String p = part.trim();
+                    if (p.startsWith("CN=")) {
+                        String cn = p.substring(3).trim();
+                        if (!cn.isBlank()) return cn;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("resolveDisplayName: CN parse failed: {}", e.getMessage());
+        }
+        if (request.signerName != null && !request.signerName.isBlank()) return request.signerName;
+        return "Semnatar";
     }
 
     private String normalize(String s) {
