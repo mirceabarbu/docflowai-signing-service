@@ -12,7 +12,7 @@
 
     <groupId>ro.docflowai</groupId>
     <artifactId>docflowai-sts-pades-service</artifactId>
-    <version>0.0.13</version>
+    <version>0.0.14</version>
     <name>docflowai-sts-pades-service</name>
     <description>Deployable Spring Boot scaffold for STS + PAdES signing integration</description>
 

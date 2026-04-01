@@ -88,18 +88,17 @@ public class PadesPrepareService extends Base64PdfSupport {
                 log.info("prepare: câmp NOU creat la pozitia ({},{}) {}x{}",
                         request.x, request.y, request.width, request.height);
             } else {
-                // b251: camp EXISTENT creat de iText via /api/pades/create-fields.
-                // iText recunoaste propriile campuri → NU are nevoie de "reparare".
-                // Putem seta appearance (setLayer2Text) safe — iText scrie MINIM in incremental update.
-                // Aspectul textual apare in celula cartusului desenata de pdf-lib.
+                // Câmp EXISTENT pre-creat de Node la flow creation:
+                // NU setăm rect — iText folosește rect-ul câmpului existent
+                // NU setăm appearance — aspect minimal (doar semnatura electronică)
+                // Rezultat: AcroForm Fields și Page Annots NU sunt modificate în incremental update
                 PdfSignatureAppearance appearance = signer.getSignatureAppearance();
                 if (request.reason      != null) appearance.setReason(request.reason);
                 if (request.location    != null) appearance.setLocation(request.location);
                 if (request.contactInfo != null) appearance.setContact(request.contactInfo);
                 appearance.setRenderingMode(PdfSignatureAppearance.RenderingMode.DESCRIPTION);
-                appearance.setLayer2Text(buildLayer2Text(request));
-                log.info("prepare b251: camp iText EXISTENT '{}' — appearance setata safe",
-                        request.fieldName);
+                appearance.setLayer2Text(buildLayer2TextMinimal(request));
+                log.info("prepare: câmp EXISTENT folosit — fara modificare AcroForm/Annots");
             }
 
             final byte[] signerCertDerFinal = signerCertDer;
