@@ -88,17 +88,13 @@ public class PadesPrepareService extends Base64PdfSupport {
                 log.info("prepare: câmp NOU creat la pozitia ({},{}) {}x{}",
                         request.x, request.y, request.width, request.height);
             } else {
-                // Câmp EXISTENT pre-creat de Node la flow creation:
-                // NU setăm rect — iText folosește rect-ul câmpului existent
-                // NU setăm appearance — aspect minimal (doar semnatura electronică)
-                // Rezultat: AcroForm Fields și Page Annots NU sunt modificate în incremental update
-                PdfSignatureAppearance appearance = signer.getSignatureAppearance();
-                if (request.reason      != null) appearance.setReason(request.reason);
-                if (request.location    != null) appearance.setLocation(request.location);
-                if (request.contactInfo != null) appearance.setContact(request.contactInfo);
-                appearance.setRenderingMode(PdfSignatureAppearance.RenderingMode.DESCRIPTION);
-                appearance.setLayer2Text(buildLayer2TextMinimal(request));
-                log.info("prepare: câmp EXISTENT folosit — fara modificare AcroForm/Annots");
+                // Câmp EXISTENT pre-creat în revizia 0 (stampFooterOnPdf la creare flux).
+                // ABSOLUT ZERO interacțiune cu appearance stream.
+                // Niciun set* pe PdfSignatureAppearance — orice apel modifică bytes existente
+                // și corupe semnăturile anterioare.
+                // iText găsește câmpul după fieldName și adaugă NUMAI ByteRange+Contents.
+                log.info("prepare b247: câmp EXISTENT '{}' — ZERO appearance (PAdES multi-sign)",
+                        request.fieldName);
             }
 
             final byte[] signerCertDerFinal = signerCertDer;
@@ -156,21 +152,21 @@ public class PadesPrepareService extends Base64PdfSupport {
         }
     }
 
-    // Aspect câmp semnătură — format final:
-    // Linia 1: "Semnat digital"
-    // Linia 2: "Nume · 01.04.2026, 10:36"  (ora României)
-    // Linia 3: "STS Cloud QES"
     private String buildLayer2Text(PrepareRequest request) {
         String name = (request.signerName == null || request.signerName.isBlank())
                 ? "Semnatar" : request.signerName;
-        String dateStr = java.time.ZonedDateTime
-                .now(java.time.ZoneId.of("Europe/Bucharest"))
-                .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm"));
-        return "Semnat digital\n" + name + " \u00B7 " + dateStr + "\nSTS Cloud QES";
+        String role = (request.signerRole == null || request.signerRole.isBlank())
+                ? "SEMNATAR" : request.signerRole.toUpperCase();
+        return "Semnat digital QES\n" + name + "\n" + role;
     }
 
+    // Minimal text pentru câmpuri pre-create (aspectul vizual vine din celula pre-desenată)
     private String buildLayer2TextMinimal(PrepareRequest request) {
-        return buildLayer2Text(request);
+        String name = (request.signerName == null || request.signerName.isBlank())
+                ? "Semnatar" : request.signerName;
+        String role = (request.signerRole == null || request.signerRole.isBlank())
+                ? "SEMNATAR" : request.signerRole.toUpperCase();
+        return name + "\n" + role;
     }
 
     static class CapturingBlankContainer implements IExternalSignatureContainer {
