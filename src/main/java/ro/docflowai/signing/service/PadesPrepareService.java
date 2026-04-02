@@ -1,10 +1,17 @@
 package ro.docflowai.signing.service;
 
+import com.itextpdf.io.font.constants.StandardFonts;
+import com.itextpdf.kernel.colors.DeviceRgb;
+import com.itextpdf.kernel.font.PdfFont;
+import com.itextpdf.kernel.font.PdfFontFactory;
 import com.itextpdf.kernel.geom.Rectangle;
+import com.itextpdf.kernel.pdf.PdfArray;
 import com.itextpdf.kernel.pdf.PdfDictionary;
 import com.itextpdf.kernel.pdf.PdfName;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.StampingProperties;
+import com.itextpdf.kernel.pdf.canvas.PdfCanvas;
+import com.itextpdf.kernel.pdf.xobject.PdfFormXObject;
 import com.itextpdf.signatures.IExternalSignatureContainer;
 import com.itextpdf.signatures.PdfSignatureAppearance;
 import com.itextpdf.signatures.PdfSigner;
@@ -18,21 +25,32 @@ import ro.docflowai.signing.dto.PrepareResponse;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.Base64;
 
 /**
- * PadesPrepareService b242
+ * PadesPrepareService b253
  *
- * ARHITECTURA CORECTA PAdES MULTI-SEMNATAR:
+ * MODIFICARE: Aparență vizuală custom pentru câmpul de semnătură QES.
+ * Layout (6 linii + chenar):
+ *   1. ROL/ATRIBUT   (bold, negru)
+ *   2. Functie        (regular, gri-inchis)
+ *   3. Semnat digital QES  (bold, albastru)
+ *   4. NUME           (bold, negru) — extras din certificat (CN)
+ *   5. dd.MM.yyyy, HH:mm:ss  (regular, gri)
+ *   6. DocFlowAI | STS Cloud QES  (mic, gri)
  *
- * Câmpurile AcroForm /Sig sunt pre-create de Node.js la creare flux (O SINGURA DATA).
- * Java primește fieldAlreadyExists=true → NU crează câmp nou → NU modifcă AcroForm Fields
- * → NU modifică Page Annots → incremental update MINIM.
+ * Chenarul NU invalidează semnătura: aparența vizuală (XObject n2/layer2) este
+ * inclusă în ByteRange-ul hash-ului PAdES — este semnat digital împreună cu
+ * conținutul documentului. Orice modificare post-signing a apariției ar invalida
+ * semnătura, ceea ce este CORECT conform standardului PAdES/eIDAS.
  *
- * Rezultat: semnăturile anterioare rămân garantat valide.
- *
- * Când fieldAlreadyExists=false (fallback, câmp nou): comportament identic cu b241.
+ * ARHITECTURA MULTI-SEMNATAR (păstrată identic față de b242):
+ * Câmpurile /Sig pre-create de Node.js (fieldAlreadyExists=true) → Java NU
+ * modifică AcroForm Fields / Page Annots → semnăturile anterioare rămân valide.
  */
 @Service
 public class PadesPrepareService extends Base64PdfSupport {
@@ -41,6 +59,30 @@ public class PadesPrepareService extends Base64PdfSupport {
 
     @Value("${APP_MODE:real}")
     private String mode;
+
+    // ── Layout constants ─────────────────────────────────────────────────────
+    private static final float PAD_X     = 4.5f;  // left padding (pt)
+    private static final float PAD_TOP   = 3.0f;  // gap between top border and first baseline
+    private static final float LINE_H    = 7.5f;  // spacing between baselines (pt)
+    private static final float BORDER_W  = 0.7f;  // border line width (pt)
+    private static final float BORDER_IN = 0.8f;  // border inset from XObject edge (pt)
+
+    // Font sizes (pt)
+    private static final float FS_ROLE = 6.5f;
+    private static final float FS_FUNC = 6.0f;
+    private static final float FS_QES  = 6.0f;
+    private static final float FS_NAME = 6.5f;
+    private static final float FS_DATE = 5.5f;
+    private static final float FS_FOOT = 5.0f;
+
+    // Colors
+    private static final DeviceRgb C_BLACK      = new DeviceRgb(0.05f, 0.05f, 0.05f);
+    private static final DeviceRgb C_DARK_GRAY  = new DeviceRgb(0.25f, 0.25f, 0.25f);
+    private static final DeviceRgb C_GRAY       = new DeviceRgb(0.45f, 0.45f, 0.45f);
+    private static final DeviceRgb C_BLUE       = new DeviceRgb(0.08f, 0.28f, 0.60f);
+    private static final DeviceRgb C_BORDER     = new DeviceRgb(0.35f, 0.35f, 0.35f);
+
+    // ── prepare() ────────────────────────────────────────────────────────────
 
     public PrepareResponse prepare(PrepareRequest request) {
         try {
@@ -61,59 +103,63 @@ public class PadesPrepareService extends Base64PdfSupport {
             byte[] pdfBytes = decodeBase64(request.pdfBase64);
             ByteArrayOutputStream preparedOut = new ByteArrayOutputStream();
             PdfReader reader = new PdfReader(new ByteArrayInputStream(pdfBytes));
-            PdfSigner signer = new PdfSigner(reader, preparedOut, new StampingProperties().useAppendMode());
+            PdfSigner signer = new PdfSigner(reader, preparedOut,
+                    new StampingProperties().useAppendMode());
             signer.setFieldName(request.fieldName);
 
             // NOT_CERTIFIED: ESENTIAL pentru multi-semnatar
-            // Fara aceasta, /DocMDP restrictionează documentul si Adobe
-            // invalideaza semnăturile anterioare la adaugarea uneia noi
             signer.setCertificationLevel(PdfSigner.NOT_CERTIFIED);
 
+            // Dimensiuni cartus — trimise ÎNTOTDEAUNA de Node.js indiferent de fieldAlreadyExists
+            float w = request.width  != null ? request.width  : 180f;
+            float h = request.height != null ? request.height : 50f;
+
+            PdfSignatureAppearance appearance = signer.getSignatureAppearance();
+            if (request.reason      != null) appearance.setReason(request.reason);
+            if (request.location    != null) appearance.setLocation(request.location);
+            if (request.contactInfo != null) appearance.setContact(request.contactInfo);
+
             if (!fieldExists) {
-                // Câmp NOU: setăm rect-ul și appearance
-                // Cazul fallback sau flux fără pre-creare câmpuri
-                PdfSignatureAppearance appearance = signer.getSignatureAppearance();
+                // Câmp NOU: setăm rect-ul explicit
                 appearance.setPageRect(new Rectangle(
                         request.x != null ? request.x : 30f,
                         request.y != null ? request.y : 30f,
-                        request.width  != null ? request.width  : 200f,
-                        request.height != null ? request.height : 50f));
+                        w, h));
                 appearance.setPageNumber(request.page != null ? request.page : 1);
-                if (request.reason     != null) appearance.setReason(request.reason);
-                if (request.location   != null) appearance.setLocation(request.location);
-                if (request.contactInfo != null) appearance.setContact(request.contactInfo);
-                // Text pur, fără iconița iText
-                appearance.setRenderingMode(PdfSignatureAppearance.RenderingMode.DESCRIPTION);
-                appearance.setLayer2Text(buildLayer2Text(request));
-                log.info("prepare: câmp NOU creat la pozitia ({},{}) {}x{}",
-                        request.x, request.y, request.width, request.height);
+                log.info("prepare: câmp NOU la ({},{}) {}x{}", request.x, request.y, w, h);
             } else {
-                // Câmp EXISTENT pre-creat de Node la flow creation:
-                // NU setăm rect — iText folosește rect-ul câmpului existent
-                // NU setăm appearance — aspect minimal (doar semnatura electronică)
-                // Rezultat: AcroForm Fields și Page Annots NU sunt modificate în incremental update
-                PdfSignatureAppearance appearance = signer.getSignatureAppearance();
-                if (request.reason      != null) appearance.setReason(request.reason);
-                if (request.location    != null) appearance.setLocation(request.location);
-                if (request.contactInfo != null) appearance.setContact(request.contactInfo);
-                appearance.setRenderingMode(PdfSignatureAppearance.RenderingMode.DESCRIPTION);
-                appearance.setLayer2Text(buildLayer2TextMinimal(request));
+                // Câmp EXISTENT: NU setăm rect — iText folosește widget-ul existent
+                // AcroForm Fields și Page Annots rămân NEATINSE în incremental update
                 log.info("prepare: câmp EXISTENT folosit — fara modificare AcroForm/Annots");
             }
 
+            // ── Aparență vizuală custom ─────────────────────────────────────
+            // Setăm layer2Text=" " (un spațiu): iText va face APPEND pe n2 XObject
+            // cu un caracter spațiu invizibil. Conținutul nostru (desenat înainte)
+            // rămâne vizibil. Chenarul și textul sunt în ByteRange-ul hash-ului PAdES.
+            appearance.setRenderingMode(PdfSignatureAppearance.RenderingMode.DESCRIPTION);
+            appearance.setLayer2Text(" ");
+
+            // Obținem XObject-ul n2 (layer2) și îi setăm BBox corect
+            PdfFormXObject layer2 = appearance.getLayer2();
+            layer2.put(PdfName.BBox, new PdfArray(new float[]{0f, 0f, w, h}));
+
+            // Desenăm conținutul custom (chenar + 6 linii text)
+            drawCustomCartus(layer2, signer.getDocument(), w, h, request);
+
+            // ── Hash capture ────────────────────────────────────────────────
             final byte[] signerCertDerFinal = signerCertDer;
             CapturingBlankContainer blank = new CapturingBlankContainer(
                     request.subFilter,
                     Boolean.TRUE.equals(request.useSignedAttributes),
                     signerCertDerFinal
             );
-            // 65536 bytes: suficient pentru TSA token DigiCert (~6KB) + chain STS (~4KB)
             int estimatedSignatureSize = 65536;
             signer.signExternalContainer(blank, estimatedSignatureSize);
 
             byte[] preparedBytes = preparedOut.toByteArray();
 
-            // ── DIAGNOSTIC: verificam ca bytes originali sunt INTACTI ──────────
+            // ── DIAGNOSTIC ──────────────────────────────────────────────────
             if (preparedBytes.length < pdfBytes.length) {
                 log.error("DIAGNOSTIC CRITIC: preparedBytes < pdfBytes ({} < {}) — iText a redus PDF!",
                         preparedBytes.length, pdfBytes.length);
@@ -128,13 +174,14 @@ public class PadesPrepareService extends Base64PdfSupport {
                     for (int di = 0; di < pdfBytes.length; di++) {
                         if (pdfBytes[di] != preparedBytes[di]) { firstDiff = di; break; }
                     }
-                    log.error("DIAGNOSTIC CRITIC: bytes modificate la pozitia {} — sig anterioare INVALIDE!", firstDiff);
+                    log.error("DIAGNOSTIC CRITIC: bytes modificate la pozitia {} — sig anterioare INVALIDE!",
+                            firstDiff);
                 }
             }
             log.info("prepare: OK — original={}b, prepared={}b, delta={}b, fieldName={}, hasCert={}",
                     pdfBytes.length, preparedBytes.length, preparedBytes.length - pdfBytes.length,
                     request.fieldName, signerCertDer != null);
-            // ── END DIAGNOSTIC ─────────────────────────────────────────────────
+            // ── END DIAGNOSTIC ──────────────────────────────────────────────
 
             PrepareResponse out = new PrepareResponse();
             out.preparedPdfBase64      = Base64.getEncoder().encodeToString(preparedBytes);
@@ -156,34 +203,131 @@ public class PadesPrepareService extends Base64PdfSupport {
         }
     }
 
-    private String buildLayer2Text(PrepareRequest request) {
-        String name = normalize((request.signerName == null || request.signerName.isBlank())
-                ? "Semnatar" : request.signerName);
-        String role = normalize((request.signerRole == null || request.signerRole.isBlank())
-                ? "SEMNATAR" : request.signerRole.toUpperCase());
-        String dateStr = java.time.ZonedDateTime.now(java.time.ZoneId.of("Europe/Bucharest"))
-                .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm"));
-        return "Semnat digital QES\n" +
-                name + "\n" +
-                role + "\n" +
-                dateStr + "\n" +
-                "DocFlowAI | STS Cloud QES";
+    // ── Desenare cartus custom ────────────────────────────────────────────────
+
+    /**
+     * Desenează aparența vizuală a câmpului de semnătură QES:
+     *   chenar + 6 linii text (rol, functie, "Semnat digital QES", nume, data/ora, footer).
+     *
+     * Sistemul de coordonate PDF: origine (0,0) la colțul STÂNGA-JOS al XObject-ului.
+     * y crește ÎN SUS. Deci prima linie (sus) are y-baseline = h - PAD_TOP - fontSize.
+     */
+    private void drawCustomCartus(PdfFormXObject layer2, com.itextpdf.kernel.pdf.PdfDocument pdfDoc,
+                                  float w, float h, PrepareRequest req) {
+        try {
+            PdfFont fontBold    = PdfFontFactory.createFont(StandardFonts.HELVETICA_BOLD);
+            PdfFont fontRegular = PdfFontFactory.createFont(StandardFonts.HELVETICA);
+
+            // Texte normalize (fără diacritice — Standard Fonts nu suportă Unicode extins)
+            String txtRole = normalize(
+                    (req.signerRole == null || req.signerRole.isBlank()) ? "SEMNATAR"
+                            : req.signerRole.toUpperCase());
+            String txtFunc = normalize(
+                    (req.signerFunction == null || req.signerFunction.isBlank()) ? ""
+                            : req.signerFunction);
+            String txtName = normalize(
+                    (req.signerName == null || req.signerName.isBlank()) ? "Semnatar"
+                            : req.signerName);
+
+            String dateStr = ZonedDateTime.now(ZoneId.of("Europe/Bucharest"))
+                    .format(DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm:ss"));
+
+            PdfCanvas canvas = new PdfCanvas(layer2, pdfDoc);
+
+            // ── 1. Chenar ──────────────────────────────────────────────────
+            canvas.saveState()
+                  .setStrokeColor(C_BORDER)
+                  .setLineWidth(BORDER_W)
+                  .rectangle(BORDER_IN, BORDER_IN, w - 2 * BORDER_IN, h - 2 * BORDER_IN)
+                  .stroke()
+                  .restoreState();
+
+            // ── 2. Linii text ──────────────────────────────────────────────
+            // Baseline-uri (y de jos în sus):
+            // Linia 1 este CEA MAI DE SUS: y1 = h - PAD_TOP - FS_ROLE
+            float y1 = h - PAD_TOP - FS_ROLE;          // rol
+            float y2 = y1 - LINE_H;                    // functie
+            float y3 = y2 - LINE_H;                    // "Semnat digital QES"
+            float y4 = y3 - LINE_H;                    // nume
+            float y5 = y4 - LINE_H;                    // data, ora
+            float y6 = y5 - (LINE_H - 0.5f);           // footer (puțin mai strans)
+
+            // Linia 1: ROL/ATRIBUT — bold, negru
+            canvas.beginText()
+                  .setFontAndSize(fontBold, FS_ROLE)
+                  .setFillColor(C_BLACK)
+                  .moveText(PAD_X, y1)
+                  .showText(truncate(txtRole, w - PAD_X * 2, fontBold, FS_ROLE))
+                  .endText();
+
+            // Linia 2: FUNCTIE — regular, gri-închis (dacă există)
+            if (!txtFunc.isEmpty()) {
+                canvas.beginText()
+                      .setFontAndSize(fontRegular, FS_FUNC)
+                      .setFillColor(C_DARK_GRAY)
+                      .moveText(PAD_X, y2)
+                      .showText(truncate(txtFunc, w - PAD_X * 2, fontRegular, FS_FUNC))
+                      .endText();
+            }
+
+            // Linia 3: "Semnat digital QES" — bold, albastru
+            canvas.beginText()
+                  .setFontAndSize(fontBold, FS_QES)
+                  .setFillColor(C_BLUE)
+                  .moveText(PAD_X, y3)
+                  .showText("Semnat digital QES")
+                  .endText();
+
+            // Linia 4: NUME — bold, negru
+            canvas.beginText()
+                  .setFontAndSize(fontBold, FS_NAME)
+                  .setFillColor(C_BLACK)
+                  .moveText(PAD_X, y4)
+                  .showText(truncate(txtName, w - PAD_X * 2, fontBold, FS_NAME))
+                  .endText();
+
+            // Linia 5: DATA ORA — regular, gri
+            canvas.beginText()
+                  .setFontAndSize(fontRegular, FS_DATE)
+                  .setFillColor(C_GRAY)
+                  .moveText(PAD_X, y5)
+                  .showText(dateStr)
+                  .endText();
+
+            // Linia 6: FOOTER — mic, gri
+            canvas.beginText()
+                  .setFontAndSize(fontRegular, FS_FOOT)
+                  .setFillColor(C_GRAY)
+                  .moveText(PAD_X, y6)
+                  .showText("DocFlowAI | STS Cloud QES")
+                  .endText();
+
+            canvas.release();
+
+            log.info("drawCustomCartus: OK — {}x{} pt, role='{}', func='{}', name='{}'",
+                    w, h, txtRole, txtFunc, txtName);
+
+        } catch (Exception e) {
+            log.error("drawCustomCartus EROARE — va folosi aparenta text simplu: {}", e.getMessage(), e);
+            // Fallback: lăsăm layer2 fără conținut custom (doar spațiul din setLayer2Text)
+        }
     }
 
-    // Varianta premium, dar sigura: doar text description, fara sa schimbam mecanismul PAdES.
-    private String buildLayer2TextMinimal(PrepareRequest request) {
-        String name = normalize((request.signerName == null || request.signerName.isBlank())
-                ? "Semnatar" : request.signerName);
-        String role = normalize((request.signerRole == null || request.signerRole.isBlank())
-                ? "SEMNATAR" : request.signerRole.toUpperCase());
-        String dateStr = java.time.ZonedDateTime.now(java.time.ZoneId.of("Europe/Bucharest"))
-                .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm"));
-        return "Semnat digital QES\n" +
-                name + "\n" +
-                role + "\n" +
-                dateStr + "\n" +
-                "DocFlowAI | STS Cloud QES";
+    /**
+     * Trunchiaza un string pentru a se incadra în maxWidth puncte la fontSize dat.
+     * Simplu: estimare liniară pe baza lățimii medii a unui caracter Helvetica.
+     */
+    private static String truncate(String text, float maxWidth, PdfFont font, float fontSize) {
+        if (text == null || text.isEmpty()) return "";
+        // Estimare lățime: Helvetica ~0.55 * fontSize per caracter mediu
+        float charW = fontSize * 0.55f;
+        int maxChars = (int) (maxWidth / charW);
+        if (maxChars <= 0) return "";
+        if (text.length() <= maxChars) return text;
+        return text.substring(0, Math.max(0, maxChars - 2)) + "..";
     }
+
+    // ── Normalize diacritice ──────────────────────────────────────────────────
 
     private String normalize(String s) {
         return s == null ? "" : s
@@ -195,6 +339,8 @@ public class PadesPrepareService extends Base64PdfSupport {
                 .replace("Ț", "T").replace("Ţ", "T");
     }
 
+    // ── CapturingBlankContainer ───────────────────────────────────────────────
+
     static class CapturingBlankContainer implements IExternalSignatureContainer {
         private final String subFilter;
         private final boolean useSignedAttributes;
@@ -203,9 +349,9 @@ public class PadesPrepareService extends Base64PdfSupport {
         String toBeSignedDigestBase64;
 
         CapturingBlankContainer(String subFilter, boolean useSignedAttributes, byte[] signingCertDer) {
-            this.subFilter          = subFilter;
+            this.subFilter           = subFilter;
             this.useSignedAttributes = useSignedAttributes;
-            this.signingCertDer     = signingCertDer;
+            this.signingCertDer      = signingCertDer;
         }
 
         @Override
