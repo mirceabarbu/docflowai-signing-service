@@ -161,28 +161,28 @@ public class PadesPrepareService extends Base64PdfSupport {
                 ? "Semnatar" : request.signerName);
         String role = normalize((request.signerRole == null || request.signerRole.isBlank())
                 ? "SEMNATAR" : request.signerRole.toUpperCase());
-        String function = normalize(request.signerFunction == null ? "" : request.signerFunction);
         String dateStr = java.time.ZonedDateTime.now(java.time.ZoneId.of("Europe/Bucharest"))
                 .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm"));
-
-        StringBuilder sb = new StringBuilder();
-        if (!role.isBlank()) sb.append(role).append("
-");
-        if (!function.isBlank()) sb.append(function).append("
-");
-        sb.append(name).append("
-
-");
-        sb.append("Semnat digital QES").append("
-");
-        sb.append(dateStr).append("
-");
-        sb.append("DocFlowAI | STS Cloud QES");
-        return sb.toString();
+        return "Semnat digital QES\n" +
+                name + "\n" +
+                role + "\n" +
+                dateStr + "\n" +
+                "DocFlowAI | STS Cloud QES";
     }
 
+    // Varianta premium, dar sigura: doar text description, fara sa schimbam mecanismul PAdES.
     private String buildLayer2TextMinimal(PrepareRequest request) {
-        return buildLayer2Text(request);
+        String name = normalize((request.signerName == null || request.signerName.isBlank())
+                ? "Semnatar" : request.signerName);
+        String role = normalize((request.signerRole == null || request.signerRole.isBlank())
+                ? "SEMNATAR" : request.signerRole.toUpperCase());
+        String dateStr = java.time.ZonedDateTime.now(java.time.ZoneId.of("Europe/Bucharest"))
+                .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm"));
+        return "Semnat digital QES\n" +
+                name + "\n" +
+                role + "\n" +
+                dateStr + "\n" +
+                "DocFlowAI | STS Cloud QES";
     }
 
     private String normalize(String s) {
