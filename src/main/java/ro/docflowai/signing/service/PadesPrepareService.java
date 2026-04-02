@@ -134,9 +134,8 @@ public class PadesPrepareService extends Base64PdfSupport {
             }
 
             // ── Aparență vizuală custom ─────────────────────────────────────
-            // Setăm layer2Text=" " (un spațiu): iText va face APPEND pe n2 XObject
-            // cu un caracter spațiu invizibil. Conținutul nostru (desenat înainte)
-            // rămâne vizibil. Chenarul și textul sunt în ByteRange-ul hash-ului PAdES.
+            // "ancore" = text simplu 2 linii în câmpul AcroForm existent
+            // "cartus" (default) = 6 linii cu chenar, flux tabel
             appearance.setRenderingMode(PdfSignatureAppearance.RenderingMode.DESCRIPTION);
             appearance.setLayer2Text(" ");
 
@@ -144,8 +143,12 @@ public class PadesPrepareService extends Base64PdfSupport {
             PdfFormXObject layer2 = appearance.getLayer2();
             layer2.put(PdfName.BBox, new PdfArray(new float[]{0f, 0f, w, h}));
 
-            // Desenăm conținutul custom (chenar + 6 linii text)
-            drawCustomCartus(layer2, signer.getDocument(), w, h, request);
+            boolean isAncore = "ancore".equalsIgnoreCase(request.appearanceMode);
+            if (isAncore) {
+                drawAncoreAppearance(layer2, signer.getDocument(), w, h, request);
+            } else {
+                drawCustomCartus(layer2, signer.getDocument(), w, h, request);
+            }
 
             // ── Hash capture ────────────────────────────────────────────────
             final byte[] signerCertDerFinal = signerCertDer;
@@ -234,23 +237,27 @@ public class PadesPrepareService extends Base64PdfSupport {
 
             PdfCanvas canvas = new PdfCanvas(layer2, pdfDoc);
 
-            // ── 1. Chenar ──────────────────────────────────────────────────
-            canvas.saveState()
-                  .setStrokeColor(C_BORDER)
-                  .setLineWidth(BORDER_W)
-                  .rectangle(BORDER_IN, BORDER_IN, w - 2 * BORDER_IN, h - 2 * BORDER_IN)
-                  .stroke()
-                  .restoreState();
-
-            // ── 2. Linii text ──────────────────────────────────────────────
-            // Baseline-uri (y de jos în sus):
-            // Linia 1 este CEA MAI DE SUS: y1 = h - PAD_TOP - FS_ROLE
+            // ── 1. Calculăm baseline-urile ÎNAINTE de chenar ───────────────
+            // Textul este ancorat de sus (y1 = h - PAD_TOP - FS_ROLE).
+            // Chenarul se oprește imediat sub ultima linie (y6), indiferent de h.
             float y1 = h - PAD_TOP - FS_ROLE;          // rol
             float y2 = y1 - LINE_H;                    // functie
             float y3 = y2 - LINE_H;                    // "Semnat digital QES"
             float y4 = y3 - LINE_H;                    // nume
             float y5 = y4 - LINE_H;                    // data, ora
             float y6 = y5 - (LINE_H - 0.5f);           // footer (puțin mai strans)
+
+            // ── 2. Chenar strâns în jurul textului ─────────────────────────
+            // borderBottom = y6 (baseline footer) - 2.5pt (margin sub text)
+            // borderTop    = h - BORDER_IN  (marginea sus a XObject-ului)
+            float borderBottom = y6 - 2.5f;
+            float borderTop    = h - BORDER_IN;
+            canvas.saveState()
+                  .setStrokeColor(C_BORDER)
+                  .setLineWidth(BORDER_W)
+                  .rectangle(BORDER_IN, borderBottom, w - 2 * BORDER_IN, borderTop - borderBottom)
+                  .stroke()
+                  .restoreState();
 
             // Linia 1: ROL/ATRIBUT — bold, negru
             canvas.beginText()
@@ -325,6 +332,80 @@ public class PadesPrepareService extends Base64PdfSupport {
         if (maxChars <= 0) return "";
         if (text.length() <= maxChars) return text;
         return text.substring(0, Math.max(0, maxChars - 2)) + "..";
+    }
+
+    // ── Aparență ANCORE: 2 linii în câmpul AcroForm existent ─────────────────
+    /**
+     * Aparența simplă pentru câmpul de semnătură din formulare cu ancore existente.
+     * Textul se scalează automat la dimensiunile câmpului (câmpul poate fi mic).
+     *
+     *   Linia 1: "Semnat digital de:"        (regular, gri, mai mic)
+     *   Linia 2: "{NUME}"                    (bold, negru)
+     *   Linia 3: "{dd.MM.yyyy, HH:mm:ss}"    (regular, gri)
+     *
+     * Nu se adaugă chenar — câmpul AcroForm are deja bordura sa vizuală.
+     */
+    private void drawAncoreAppearance(PdfFormXObject layer2, com.itextpdf.kernel.pdf.PdfDocument pdfDoc,
+                                      float w, float h, PrepareRequest req) {
+        try {
+            PdfFont fontBold    = PdfFontFactory.createFont(StandardFonts.HELVETICA_BOLD);
+            PdfFont fontRegular = PdfFontFactory.createFont(StandardFonts.HELVETICA);
+
+            String txtName = normalize(
+                    (req.signerName == null || req.signerName.isBlank()) ? "Semnatar"
+                            : req.signerName);
+            String dateStr = ZonedDateTime.now(ZoneId.of("Europe/Bucharest"))
+                    .format(DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm:ss"));
+
+            // Font sizes adaptive: scalam la înălțimea câmpului (min 5pt, max 7pt)
+            float fsLabel = Math.min(7f, Math.max(5f, h * 0.16f));
+            float fsName  = Math.min(7.5f, Math.max(5.5f, h * 0.18f));
+            float fsDate  = Math.min(6.5f, Math.max(4.5f, h * 0.14f));
+
+            // Spațiere între linii
+            float lineH = h / 3.6f;
+
+            // Baseline-uri: de sus în jos
+            float padTop = h * 0.08f;
+            float y1 = h - padTop - fsLabel;
+            float y2 = y1 - lineH;
+            float y3 = y2 - lineH;
+
+            float padX = Math.max(2f, w * 0.025f);
+
+            PdfCanvas canvas = new PdfCanvas(layer2, pdfDoc);
+
+            // Linia 1: "Semnat digital de:"
+            canvas.beginText()
+                  .setFontAndSize(fontRegular, fsLabel)
+                  .setFillColor(C_GRAY)
+                  .moveText(padX, y1)
+                  .showText("Semnat digital de:")
+                  .endText();
+
+            // Linia 2: NUME — bold, negru
+            canvas.beginText()
+                  .setFontAndSize(fontBold, fsName)
+                  .setFillColor(C_BLACK)
+                  .moveText(padX, y2)
+                  .showText(truncate(txtName, w - padX * 2, fontBold, fsName))
+                  .endText();
+
+            // Linia 3: DATA ORA
+            canvas.beginText()
+                  .setFontAndSize(fontRegular, fsDate)
+                  .setFillColor(C_GRAY)
+                  .moveText(padX, y3)
+                  .showText(dateStr)
+                  .endText();
+
+            canvas.release();
+
+            log.info("drawAncoreAppearance: OK — {}x{} pt, name='{}'", w, h, txtName);
+
+        } catch (Exception e) {
+            log.error("drawAncoreAppearance EROARE: {}", e.getMessage(), e);
+        }
     }
 
     // ── Normalize diacritice ──────────────────────────────────────────────────
