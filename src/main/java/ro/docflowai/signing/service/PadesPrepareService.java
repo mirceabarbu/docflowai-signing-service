@@ -157,27 +157,32 @@ public class PadesPrepareService extends Base64PdfSupport {
     }
 
     private String buildLayer2Text(PrepareRequest request) {
-        return buildLayer2TextMinimal(request);
-    }
-
-    private String buildLayer2TextMinimal(PrepareRequest request) {
         String name = normalize((request.signerName == null || request.signerName.isBlank())
                 ? "Semnatar" : request.signerName);
         String role = normalize((request.signerRole == null || request.signerRole.isBlank())
                 ? "SEMNATAR" : request.signerRole.toUpperCase());
-        String functie = normalize(request.signerFunction == null ? "" : request.signerFunction);
+        String function = normalize(request.signerFunction == null ? "" : request.signerFunction);
         String dateStr = java.time.ZonedDateTime.now(java.time.ZoneId.of("Europe/Bucharest"))
                 .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm"));
 
         StringBuilder sb = new StringBuilder();
-        if (!role.isBlank()) sb.append(role).append("\n");
-        if (!functie.isBlank()) sb.append(functie).append("\n");
-        if (!name.isBlank()) sb.append(name).append("\n");
-        sb.append("\n");
-        sb.append("Semnat digital QES\n");
-        sb.append(dateStr).append("\n");
+        if (!role.isBlank()) sb.append(role).append("
+");
+        if (!function.isBlank()) sb.append(function).append("
+");
+        sb.append(name).append("
+
+");
+        sb.append("Semnat digital QES").append("
+");
+        sb.append(dateStr).append("
+");
         sb.append("DocFlowAI | STS Cloud QES");
         return sb.toString();
+    }
+
+    private String buildLayer2TextMinimal(PrepareRequest request) {
+        return buildLayer2Text(request);
     }
 
     private String normalize(String s) {
