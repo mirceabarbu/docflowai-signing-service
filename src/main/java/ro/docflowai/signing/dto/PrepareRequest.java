@@ -28,4 +28,7 @@ public class PrepareRequest {
     // b253: "cartus" (default, flux tabel) = 6 linii cu chenar
     //        "ancore"  (flux ancore STS)   = 2 linii simple în câmpul AcroForm existent
     public String appearanceMode;
+    // b254: text delegare — afișat ca linie 7 în cartuș dacă != null
+    //        Format trimis de Node: "delegat de Nume - Funcție"
+    public String delegatedFromText;
 }
