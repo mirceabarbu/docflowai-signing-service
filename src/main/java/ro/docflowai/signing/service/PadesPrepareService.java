@@ -259,7 +259,7 @@ public class PadesPrepareService extends Base64PdfSupport {
             // ── 2. Chenar strâns în jurul textului ─────────────────────────
             // borderBottom = ultima baseline - 2.5pt (margin sub text)
             // borderTop    = h - BORDER_IN  (marginea sus a XObject-ului)
-            float borderBottom = (hasDeleg ? y7 : y6) - 2.5f;
+            float borderBottom = y7 - 2.5f;
             float borderTop    = h - BORDER_IN;
             canvas.saveState()
                   .setStrokeColor(C_BORDER)
