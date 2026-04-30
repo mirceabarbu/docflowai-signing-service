@@ -81,6 +81,8 @@ public class PadesPrepareService extends Base64PdfSupport {
     private static final DeviceRgb C_GRAY       = new DeviceRgb(0.45f, 0.45f, 0.45f);
     private static final DeviceRgb C_BLUE       = new DeviceRgb(0.08f, 0.28f, 0.60f);
     private static final DeviceRgb C_BORDER     = new DeviceRgb(0.35f, 0.35f, 0.35f);
+    // b254: violet pentru linia de delegare
+    private static final DeviceRgb C_PURPLE     = new DeviceRgb(0.38f, 0.18f, 0.58f);
 
     // ── prepare() ────────────────────────────────────────────────────────────
 
@@ -235,22 +237,29 @@ public class PadesPrepareService extends Base64PdfSupport {
             String dateStr = ZonedDateTime.now(ZoneId.of("Europe/Bucharest"))
                     .format(DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm:ss"));
 
+            // b254: text delegare (opțional) — desenat ca linie 7 violet sub footer
+            String txtDeleg = (req.delegatedFromText == null || req.delegatedFromText.isBlank())
+                    ? ""
+                    : normalize(req.delegatedFromText);
+            boolean hasDeleg = !txtDeleg.isEmpty();
+
             PdfCanvas canvas = new PdfCanvas(layer2, pdfDoc);
 
             // ── 1. Calculăm baseline-urile ÎNAINTE de chenar ───────────────
             // Textul este ancorat de sus (y1 = h - PAD_TOP - FS_ROLE).
-            // Chenarul se oprește imediat sub ultima linie (y6), indiferent de h.
+            // Chenarul se oprește imediat sub ultima linie (y6 sau y7 dacă delegare).
             float y1 = h - PAD_TOP - FS_ROLE;          // rol
             float y2 = y1 - LINE_H;                    // functie
             float y3 = y2 - LINE_H;                    // "Semnat digital QES"
             float y4 = y3 - LINE_H;                    // nume
             float y5 = y4 - LINE_H;                    // data, ora
             float y6 = y5 - (LINE_H - 0.5f);           // footer (puțin mai strans)
+            float y7 = y6 - (LINE_H - 1.0f);           // b254: delegare (sub footer, mai strans)
 
             // ── 2. Chenar strâns în jurul textului ─────────────────────────
-            // borderBottom = y6 (baseline footer) - 2.5pt (margin sub text)
+            // borderBottom = ultima baseline - 2.5pt (margin sub text)
             // borderTop    = h - BORDER_IN  (marginea sus a XObject-ului)
-            float borderBottom = y6 - 2.5f;
+            float borderBottom = (hasDeleg ? y7 : y6) - 2.5f;
             float borderTop    = h - BORDER_IN;
             canvas.saveState()
                   .setStrokeColor(C_BORDER)
@@ -309,10 +318,21 @@ public class PadesPrepareService extends Base64PdfSupport {
                   .showText("DocFlowAI | STS Cloud QES")
                   .endText();
 
+            // Linia 7 (b254): DELEGARE — italic mic, violet (dacă există delegatedFromText)
+            if (hasDeleg) {
+                PdfFont fontItalic = PdfFontFactory.createFont(StandardFonts.HELVETICA_OBLIQUE);
+                canvas.beginText()
+                      .setFontAndSize(fontItalic, FS_FOOT)
+                      .setFillColor(C_PURPLE)
+                      .moveText(PAD_X, y7)
+                      .showText(truncate(txtDeleg, w - PAD_X * 2, fontItalic, FS_FOOT))
+                      .endText();
+            }
+
             canvas.release();
 
-            log.info("drawCustomCartus: OK — {}x{} pt, role='{}', func='{}', name='{}'",
-                    w, h, txtRole, txtFunc, txtName);
+            log.info("drawCustomCartus: OK — {}x{} pt, role='{}', func='{}', name='{}', deleg='{}'",
+                    w, h, txtRole, txtFunc, txtName, hasDeleg ? txtDeleg : "");
 
         } catch (Exception e) {
             log.error("drawCustomCartus EROARE — va folosi aparenta text simplu: {}", e.getMessage(), e);
